@@ -42,15 +42,35 @@ rules:
     reason: "Will create multiple files that might not be used"
 
 safe:
-  id: touch
-  match:
-    program: touch
-    flags_allowed: []
-    targets_must: [no_glob]
-  note: "Creates {targets} if it doesnt exist, or updates its timestamp."
-  examples:
-    match:  ["touch_notes.txt", "touch a.py b.py"]
-    no match: ["sudo touch /etc/x"]
+  - id: touch
+    match:
+      program: touch
+      flags_allowed: []
+      targets_must: [no_glob]
+    note: "Creates {targets} if it doesnt exist, or updates its timestamp."
+    examples:
+      match:  ["touch_notes.txt", "touch a.py b.py"]
+      no match: ["sudo touch /etc/x"]
+      
+  - id: rm-one-file
+    match:
+      program: rm
+      flags_allowed: ["-i", "-v"]       # any other flag → not safe
+      max_targets: 1
+      targets_must: [no_glob, not_hidden, in_cwd]
+    note: "Deletes {targets}. It won't go to the trash."
+    examples:
+      match:    ["rm notes.txt", "rm -i draft.md"]
+      no_match: ["rm *.txt", "rm a.txt b.txt", "rm .bashrc",
+                 "rm ../x.txt", "rm -r folder", "sudo rm x.txt"]
+                 
+  - id: mkdir
+    match:
+      program: mkdir
+      flags_allowed: ["-p", "-v"]
+    examples:
+      match: ["mkdir project", "mkdir -p src/utils"]
+
 
 modifiers:
   sudo:
