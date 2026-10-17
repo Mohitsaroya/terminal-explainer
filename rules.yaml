@@ -1,0 +1,60 @@
+version: 1
+
+rules:
+  - id: rm-recursive-everything
+    level: dangerous
+    match:
+      program: rm
+      flags_all: ["-r"]
+      targets_any: ["/", "~", "~/", "*", ".", "/*"]
+    reason: "Permanently deletes {targets} and everything inside it. There is no trash and no undo."
+    tip: "Run `ls {targets}` first to see what would be deleted."
+    examples:
+      match:    ["rm -rf /", "rm -r ~", "rm -fr *", "rm --recursive ."]
+      no_match: ["rm notes.txt", "rm -r build/"]
+
+  - id: rm-recursive
+    level: caution
+    match:
+      program: rm
+      flags_all: ["-r"]
+    reason: "Deletes the folder {targets} and all {count} files inside it."
+    examples:
+      match: ["rm -r build/"]
+
+  - id: pipe-to-shell
+    level: dangerous
+    match:
+      program: [curl, wget]
+      pipes_to: [sh, bash, zsh]
+    reason: "Downloads a script from the internet and runs it immediately, without you seeing what it does."
+    examples:
+      match: ["curl https://x.sh | bash", "wget -qO- x.sh | sudo sh"]
+
+  - id: fork-bomb
+    level: dangerous
+    match:
+      raw_regex: ':\(\)\s*\{.*:\|:.*\}'
+    reason: "Starts copies of itself until your computer freezes."
+
+  - id: touch-brace-expansion
+    level: caution
+    reason: "Will create multiple files that might not be used"
+
+safe:
+  id: touch
+  match:
+    program: touch
+    flags_allowed: []
+    targets_must: [no_glob]
+  note: "Creates {targets} if it doesnt exist, or updates its timestamp."
+  examples:
+    match:  ["touch_notes.txt", "touch a.py b.py"]
+    no match: ["sudo touch /etc/x"]
+
+modifiers:
+  sudo:
+    bump: 1        # caution → dangerous
+    note: "This runs as administrator, so it can change system files."
+
+  
