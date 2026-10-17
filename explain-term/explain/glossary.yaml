@@ -1,0 +1,147 @@
+# This file contains the commands and their brief explanations
+# It also is categorized by its risk.
+# if there are flags with the given command then there is a flags
+# section and their brief explanations.
+#
+
+programs:
+  ls:
+    summary: "Lists the files and folders {where}."
+    risk: safe
+    flags:
+      -l: "shows details: size, date and permissions"
+      -a: "includes hidden files (names starting with a dot)"
+      -h: "shows sizes like 4.2K instead of raw bytes"
+      -R: "also lists everything inside subfolders"
+      -t: "sorts by date, newest first"
+  cd:
+    summary: "Moves you into the folder {args}."
+    risk: safe
+  pwd:
+    summary: "Shows the full path of the folder you are in."
+    risk: safe
+  cat:
+    summary: "Prints the contents of {args} on the screen."
+    risk: safe
+  less:
+    summary: "Opens {args} for reading, one screen at a time (press q to quit)."
+    risk: safe
+  head:
+    summary: "Shows the first lines of {args}."
+    risk: safe
+    flags:
+      -n: "sets how many lines to show"
+  tail:
+    summary: "Shows the last lines of {args}."
+    risk: safe
+    flags:
+      -n: "sets how many lines to show"
+      -f: "keeps watching the file and prints new lines as they are added (Ctrl+C to stop)"
+  echo:
+    summary: "Prints text on the screen (or into a file, if followed by > or >>)."
+    risk: safe
+  grep:
+    summary: "Searches for matching text inside files."
+    risk: safe
+    flags:
+      -i: "ignores upper and lower case"
+      -r: "searches inside every subfolder too"
+      -n: "shows the line number of each match"
+      -v: "shows lines that do NOT match"
+  find:
+    summary: "Searches for files and folders by name or other properties."
+    risk: safe
+  man:
+    summary: "Opens the manual page for {args} (press q to quit)."
+    risk: safe
+  clear:
+    summary: "Clears the terminal screen. Nothing is deleted."
+    risk: safe
+  open:
+    summary: "Opens {args} with its default Mac app."
+    risk: safe
+  mkdir:
+    summary: "Creates a new folder named {args}."
+    risk: safe
+    flags:
+      -p: "also creates any missing parent folders, and does not complain if it already exists"
+  touch:
+    summary: "Creates {args} as an empty file, or updates its timestamp if it exists."
+    risk: safe
+  cp:
+    summary: "Copies {args}. An existing file at the destination is overwritten without asking."
+    risk: caution
+    flags:
+      -r: "copies folders and everything inside them"
+      -R: "copies folders and everything inside them"
+      -i: "asks before overwriting a file"
+      -n: "never overwrites an existing file"
+      -v: "prints each file as it is copied"
+  mv:
+    summary: "Moves or renames {args}. An existing file at the destination is overwritten without asking."
+    risk: caution
+    flags:
+      -i: "asks before overwriting a file"
+      -n: "never overwrites an existing file"
+      -f: "overwrites without asking, even if it would normally ask"
+      -v: "prints each file as it is moved"
+  rm:
+    summary: "Permanently deletes {args}. Deleted files do not go to the Trash."
+    risk: danger
+    flags:
+      -r: "also deletes folders and everything inside them"
+      -R: "also deletes folders and everything inside them"
+      -f: "never asks for confirmation and ignores files that don't exist"
+      -i: "asks before deleting each file"
+      -v: "prints each file as it is deleted"
+      -d: "also deletes empty folders"
+  rmdir:
+    summary: "Deletes the folder {args}, but only if it is empty."
+    risk: caution
+  chmod:
+    summary: "Changes who can read, write or run {args}."
+    risk: caution
+    flags:
+      -R: "also changes everything inside folders"
+  chown:
+    summary: "Changes the owner of {args}."
+    risk: caution
+    flags:
+      -R: "also changes everything inside folders"
+  sudo:
+    summary: "Runs the rest of the command as administrator, with permission to change anything."
+    risk: danger
+  dd:
+    summary: "Copies raw data between files or disks. A wrong target can erase a whole disk."
+    risk: danger
+  curl:
+    summary: "Downloads data from a web address."
+    risk: caution
+    flags:
+      -o: "saves the download to the named file"
+      -O: "saves the download using the file's own name"
+      -L: "follows redirects to the final address"
+      -s: "hides the progress bar"
+  wget:
+    summary: "Downloads a file from a web address."
+    risk: caution
+  kill:
+    summary: "Stops the running program with ID {args}."
+    risk: caution
+    flags:
+      "-9": "forces it to stop immediately, without letting it save anything"
+  tar:
+    summary: "Packs files into, or unpacks them from, an archive."
+    risk: caution
+    flags:
+      -c: "creates a new archive"
+      -x: "extracts files from an archive, possibly overwriting files with the same names"
+      -z: "uses gzip compression (.tar.gz)"
+      -v: "prints each file name"
+      -f: "the next word is the archive's file name"
+  unzip:
+    summary: "Extracts the files inside {args}, possibly overwriting files with the same names."
+    risk: caution
+  pip:
+    summary: "Installs or manages Python packages: {args}."
+    risk: caution
