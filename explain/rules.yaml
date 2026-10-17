@@ -1,0 +1,79 @@
+# Danger rules, checked top to bottom against every segment of a command.
+# The highest level any rule reaches wins: safe < caution < dangerous.
+#
+#   program:    program name (string or list)
+#   any_flags:  matches if any of these flags is present
+#   all_flags:  matches only if all of these flags are present
+#   targets:    matches if any target equals one of these
+#   sudo:       true to match only when run with sudo
+#   pattern:    regex searched in the raw command line
+#   files:      true to list affected files for the warning
+
+rules:
+  - program: rm
+    all_flags: [-r, -f]
+    targets: ["/", "/*", "~", "~/", "*", ".", "..", "$HOME"]
+    level: dangerous
+    reason: Deletes everything under a top-level or current folder, with no undo.
+    files: true
+  - program: rm
+    any_flags: [-r, -R, --recursive]
+    level: dangerous
+    reason: Deletes folders and everything inside them, with no undo.
+    files: true
+  - program: rm
+    level: caution
+    reason: Deletes files permanently (there is no trash bin).
+    files: true
+  - program: [mkfs, mkfs.ext4, mkfs.vfat, fdisk, parted, wipefs]
+    level: dangerous
+    reason: Formats or repartitions a disk, erasing everything on it.
+  - program: dd
+    pattern: "of=/dev/"
+    level: dangerous
+    reason: Writes raw bytes straight onto a disk device.
+  - pattern: ":\\(\\)\\s*\\{\\s*:\\|:&\\s*\\}\\s*;\\s*:"
+    level: dangerous
+    reason: Fork bomb; starts processes until the machine freezes.
+  - pattern: "(curl|wget)[^|]*\\|\\s*(sudo\\s+)?(ba|z)?sh"
+    level: dangerous
+    reason: Downloads a script and runs it without letting you read it first.
+  - program: chmod
+    any_flags: [-R]
+    targets: ["777", "/"]
+    level: dangerous
+    reason: Opens up permissions on a whole tree to everyone.
+  - program: [chmod, chown]
+    level: caution
+    reason: Changes who can read, write or run files.
+  - program: [mv, cp]
+    level: caution
+    reason: Can silently overwrite a file with the same name at the destination.
+    files: true
+  - pattern: "(^|[^>])>\\s*[^>&\\s]"
+    level: caution
+    reason: The > redirect replaces the file's contents; use >> to append.
+  - program: git
+    targets: [reset]
+    any_flags: [--hard]
+    level: dangerous
+    reason: Throws away all uncommitted changes.
+  - program: git
+    targets: [clean]
+    any_flags: [-f]
+    level: dangerous
+    reason: Deletes untracked files that git never saved.
+  - program: git
+    targets: [push]
+    any_flags: [--force, -f]
+    level: caution
+    reason: Overwrites history on the remote for everyone.
+  - program: [kill, killall, pkill]
+    level: caution
+    reason: Stops running programs, which may lose unsaved work.
+  - program: [shutdown, reboot, halt, poweroff]
+    level: caution
+    reason: Turns off or restarts the machine.
+  - sudo: true
+    level: caution
+    reason: Runs as administrator, so mistakes can affect the whole system.
