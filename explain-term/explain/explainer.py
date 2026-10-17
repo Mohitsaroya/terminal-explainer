@@ -19,6 +19,15 @@ Max_Len, Max_Steps, Max_Effects = 160, 6, 5
 Separators =  {"&&", "||", ";", "|", "&"}
 Redirects = {">", ">>", "<", "2>", "&>"}
 
+# -- Helper function(s)
+
+def _cut(string):
+    """
+    Purpose:
+    Parameter
+    """
+
+
 # -- Public API for other files to use
 
 def merge_risk(a, b):
@@ -40,4 +49,9 @@ def explain(line, cmds=None, ctx=None):
     Return: it returns a block of text that describes
     the summary, the steps, side effects, and other options with the commands.
     """
+    t0 = time.monotic()
+    try: cmds = list(cmds) if cmds else quick_parse(line)
+
+    except ValueError:
+        cmds = []
     
