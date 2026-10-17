@@ -1,0 +1,19 @@
+# rules for detecting programs/args
+# if a dictionary in rules contains 4 items, it contains non-program args
+
+
+rules:
+  - program: rm
+    args: ["-r", "-f", "/", "/*", "~", "~/", "*", ".", "..", "$HOME"]
+    level: dangerous
+    reason: Deletes everything under a top-level or current folder, with no undo.
+  - program: rm
+    level: caution
+    reason: Deletes files permanently (there is no trash bin).
+  #not a program but special case
+  - program: sudo
+    level: caution
+    reason: Runs as administrator, so mistakes can affect the whole system.
+  - program: touch
+    level: safe
+    reason: Creates a file (harmless)

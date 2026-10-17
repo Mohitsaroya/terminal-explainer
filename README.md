@@ -6,10 +6,59 @@ Built for beginners: see the *Safe Terminal: Team Explainer* doc for the full id
 This is the first skeleton. The LLM answers are canned (`EXPLAIN_LLM=fake`), so everything
 can be built and tested before the real model is picked.
 
+## Installing dependencies
+
+You need **Python 3.12 or newer**. Check with `python3 --version`.
+
+The project depends on:
+
+| Package | What it's for |
+|---|---|
+| `rich` | Coloured panels and the live y/n prompt in the terminal |
+| `pyyaml` | Reading the danger rules from `rules.yaml` |
+| `bashlex` | Parsing shell commands properly (pipes, quotes, `&&`) |
+| `pydantic` | Checking that rules and results have the right shape |
+| `pytest` | Running the tests (dev only) |
+
+### Option 1: uv (recommended)
+
+The repo has a `uv.lock`, so `uv` installs the exact same versions everyone else on the team has.
+
+```sh
+# install uv once (macOS)
+brew install uv            # or: curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# from the terminal-explainer folder
+uv sync                    # creates .venv and installs everything, including pytest
+source .venv/bin/activate  # or prefix commands with `uv run`, e.g. `uv run pytest`
+```
+
+To add a new package later: `uv add <package>` (or `uv add --dev <package>` for dev tools).
+This updates `pyproject.toml` and `uv.lock`, so commit both.
+
+### Option 2: pip
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+pip install bashlex pydantic pyyaml rich pytest
+```
+
+This works, but it won't use the pinned versions in `uv.lock`.
+
+### Check it worked
+
+```sh
+python3 -c "import rich, yaml, bashlex, pydantic; print('all good')"
+```
+
+If you get `ModuleNotFoundError`, the virtual environment probably isn't active. Run
+`source .venv/bin/activate` again (you need to do this in every new terminal window).
+
 ## Try it
 
 ```sh
-pip install -e '.[pretty,dev]'      # pyyaml; rich and pytest are optional
+# after installing dependencies (above):
 python3 -m explain rules -- "rm -rf project/"     # danger verdict as JSON
 python3 -m explain check -- "rm -rf project/"     # explanation + y/n (exit 0 = run)
 python3 -m explain why 127 -- "pyhton3 app.py"    # explain a failure
