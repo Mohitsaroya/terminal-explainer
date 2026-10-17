@@ -1,0 +1,15 @@
+[project]
+name = "terminal-explainer"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "bashlex>=0.18",
+    "pydantic>=2.14.1",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
