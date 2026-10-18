@@ -10,9 +10,9 @@ Public API
     Context.confirm_word()   -> str | None  what the user must type to confirm danger
     Context.to_dict()        -> dict        plain data (for debugging or saving)
 
-Assumption about parser.py (Person 2): each parsed command exposes `.program` and
-`.args` (a dict with the same keys also works). Flags may be in `.args` or in a
-separate `.flags` list; anything starting with "-" is skipped either way.
+`cmds` comes from explainer.quick_parse(): a list of {"program": ..., "args": [...]}
+dicts (objects with `.program` and `.args` also work). Anything in args that starts
+with "-" is treated as a flag and skipped.
 """
 from __future__ import annotations
 
@@ -35,6 +35,19 @@ PATH_PROGRAMS = {
 HAS_DEST = {"mv", "cp", "ln", "rsync"}
 # sudo options that take a value: `sudo -u bob rm x` runs `rm x`.
 SUDO_VALUE_OPTS = {"-u", "-g", "-C", "-D", "-h", "-p", "-R", "-T", "-U"}
+# Programs that run another command given after them, and their options that take a
+# value. `xargs -n 1 rm` runs rm, so rm is what the rules and the counts must look at.
+WRAPPERS = {
+    "sudo": SUDO_VALUE_OPTS,
+    "doas": {"-u", "-C"},
+    "env": {"-u", "-C", "-S"},
+    "nice": {"-n"},
+    "nohup": set(),
+    "time": set(),
+    "command": set(),
+    "exec": {"-a"},
+    "xargs": {"-n", "-I", "-P", "-L", "-d", "-s", "-E", "-a"},
+}
 
 MAX_ENTRIES = 20_000   # stop counting after this many files ("20,000+")
 TIME_BUDGET = 0.5      # seconds for all filesystem walking in one resolve()
@@ -171,7 +184,7 @@ def _resolve_into(ctx: Context, cmds, cur: str, budget: float) -> None:
     for cmd in cmds:
         prog = os.path.basename(str(_get(cmd, "program", "name", "cmd") or ""))
         args = [a for a in (_get(cmd, "args") or []) if isinstance(a, str)]
-        prog, args = strip_sudo(prog, args)
+        prog, args = strip_wrappers(prog, args)
 
         if prog == "cd":
             # `cd /tmp && rm -rf *` deletes /tmp's contents, not the current folder's.
@@ -203,23 +216,48 @@ def _resolve_into(ctx: Context, cmds, cur: str, budget: float) -> None:
 
     first = next((t for t in ctx.targets if t.exists), None)
     if first is not None:
-        ctx.in_git_repo, ctx.git_dirty_files = _git_status(first.cwd)
+        # Ask git about the folder being changed, not the folder we are in:
+        # `rm -rf ~/other-project` is about other-project's repository.
+        where = first.matches[0] if first.is_dir else os.path.dirname(first.matches[0])
+        ctx.in_git_repo, ctx.git_dirty_files = _git_status(where)
 
 
 # ---------------------------------------------------------------- helpers
-def strip_sudo(prog: str, args: list):
-    """("sudo", ["-u", "bob", "rm", "x"]) -> ("rm", ["x"]). Anything else is returned as is."""
-    while prog == "sudo":
-        i = 0
-        while i < len(args) and args[i].startswith("-"):
-            if args[i] == "--":
-                i += 1
-                break
-            i += 2 if args[i] in SUDO_VALUE_OPTS else 1
-        if i >= len(args):              # `sudo -i` or bare `sudo`: no command to unwrap
+def unwrap_once(prog: str, args: list):
+    """("sudo", ["-u", "bob", "rm", "x"]) -> ("rm", ["x"]). Peels off one wrapper only.
+
+    Anything that isn't a wrapper, or a wrapper with no command after it
+    (`sudo -i`, bare `env`, `command -v rm`), is returned as is.
+    """
+    value_opts = WRAPPERS.get(prog)
+    if value_opts is None:
+        return prog, args
+    i = 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            i += 1
             break
-        prog, args = os.path.basename(args[i]), args[i + 1:]
-    return prog, args
+        if prog == "env" and "=" in a and not a.startswith("-"):
+            i += 1                      # env FOO=1 rm x
+        elif a.startswith("-"):
+            if prog == "command" and a in ("-v", "-V"):
+                return prog, args       # only looks the name up, runs nothing
+            i += 2 if a in value_opts else 1
+        else:
+            break
+    if i >= len(args):
+        return prog, args
+    return os.path.basename(args[i]), args[i + 1:]
+
+
+def strip_wrappers(prog: str, args: list):
+    """Peel off every wrapper: ("env", ["sudo", "rm", "x"]) -> ("rm", ["x"])."""
+    while True:
+        inner = unwrap_once(prog, args)
+        if inner == (prog, args):
+            return prog, args
+        prog, args = inner
 
 
 def _get(cmd, *names):

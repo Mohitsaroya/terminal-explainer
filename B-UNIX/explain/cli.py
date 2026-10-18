@@ -10,7 +10,6 @@ Any crash exits 0 so a bug in explain-term never stops a command from running.
 """
 import argparse
 import os
-import re
 import sys
 from pathlib import Path
 
@@ -20,6 +19,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 RUN, CANCEL, EDIT = 0, 1, 3
 
+# Programs that delete files. One hidden inside $(...) or `...` is always danger,
+# because the line looks like it only prints or lists something.
+REMOVALS = {"rm", "unlink", "shred", "rmdir"}
+
 # Common exit codes and what they mean for a beginner.
 EXIT_CODES = {
     126: "The file exists but is not allowed to run (check its permissions).",
@@ -28,6 +31,7 @@ EXIT_CODES = {
 
 
 def parse_args(argv):
+    """Read the hook's arguments. The command line is joined back into one string."""
     p = argparse.ArgumentParser(prog="explain-term")
     sub = p.add_subparsers(dest="mode", required=True)
     ex = sub.add_parser("explain")
@@ -42,10 +46,16 @@ def parse_args(argv):
 
 
 def explain_mode(line):
+    """Explain `line`, ask before risky commands, and return RUN, CANCEL or EDIT."""
     from explain import context, explainer, render
-    from rules.rules import checker
 
-    cmds = explainer.quick_parse(line)
+    try:
+        cmds = explainer.quick_parse(line)
+    except ValueError:
+        # An unclosed quote: we can't tell what would run, so ask instead of guessing.
+        return _decision_to_exit(render.show(_unreadable_record(line)))
+
+    # Sourcing the hook itself (or any script) is let through without a panel.
     if len(cmds) == 1 and os.path.basename(cmds[0].get("program", "")) in {"source", "."}:
         return RUN
 
@@ -54,30 +64,29 @@ def explain_mode(line):
     rec["command"] = line
     rec["confirm_word"] = ctx.confirm_word()
 
+    # Each simple command is checked against rules.yaml, and the riskiest verdict
+    # wins for the whole line: `touch a && rm -rf *` is as risky as `rm -rf *`.
     rule_messages = []
     segments = []
     for cmd in cmds:
         program = cmd.get("program", "")
         args = cmd.get("args", [])
-        rule_risk, reason = checker([program, *args])
+        rule_risk, reason = _check_rules(program, args)
         command = " ".join([program, *args])
         segment = explainer.explain("", [cmd])
         segment_risk = explainer.merge_risk(segment["risk"], rule_risk)
         rec["risk"] = explainer.merge_risk(rec["risk"], rule_risk)
+        if cmd.get("in_substitution"):
+            command += " (inside command substitution)"
+            if context.strip_wrappers(os.path.basename(program), args)[0] in REMOVALS:
+                # `echo $(rm -rf *)` looks harmless but deletes files.
+                segment_risk = rec["risk"] = "danger"
+                rec["reversible"] = False
+                reason = "A command substitution runs a file-removal command."
+                rule_risk = "danger"
         segments.append({"command": command, "risk": segment_risk})
         if rule_risk != "safe" and reason not in rule_messages:
             rule_messages.append(reason)
-
-    echo_removals = _echo_removal_commands(line, cmds)
-    if echo_removals:
-        rec["risk"] = "danger"
-        rec["reversible"] = False
-        reason = "echo command substitution runs a file-removal command."
-        rule_messages.append(reason)
-        segments.extend(
-            {"command": f"{command} (inside echo substitution)", "risk": "danger"}
-            for command in echo_removals
-        )
 
     if rule_messages:
         rec["rule_messages"] = rule_messages
@@ -86,93 +95,52 @@ def explain_mode(line):
 
     decision = render.show(rec)
     if decision == "ran":
+        # The hook prints this one-line summary for safe commands just before they run.
         safe_summary_file = os.environ.get("EXPLAIN_SAFE_SUMMARY_FILE")
         if rec["risk"] == "safe" and safe_summary_file and rec.get("summary"):
             Path(safe_summary_file).write_text(rec["summary"], encoding="utf-8")
+    return _decision_to_exit(decision)
+
+
+def _check_rules(program, args):
+    """rules.yaml verdict for one command, also looking through sudo, env, xargs, ...
+
+    `env rm -rf /` is checked as `rm -rf /`, and the riskier verdict is kept.
+    """
+    from explain import context, explainer
+    from rules.rules import checker
+
+    risk, reason = checker([program, *args])
+    inner, inner_args = context.strip_wrappers(os.path.basename(program), args)
+    if inner != os.path.basename(program):
+        inner_risk, inner_reason = checker([inner, *inner_args])
+        if explainer.merge_risk(risk, inner_risk) != risk:
+            risk, reason = inner_risk, inner_reason
+    return risk, reason
+
+
+def _unreadable_record(line):
+    """Panel data for a line that can't be split into words (an unclosed quote)."""
+    return {
+        "command": line,
+        "risk": "caution",
+        "summary": "This line has a quote that is never closed, so B-UNIX can't tell what it would run.",
+        "rule_messages": ["Check that every ' and \" has a matching closing quote."],
+    }
+
+
+def _decision_to_exit(decision):
+    """render.show()'s answer -> the exit code the hook expects."""
+    if decision == "ran":
         return RUN
     if decision == "edited":
         return EDIT
     return CANCEL
 
 
-def _echo_removal_commands(line, cmds):
-    """Find removal commands that execute inside an echo substitution."""
-    echo_commands = [
-        cmd for cmd in cmds
-        if os.path.basename(cmd.get("program", "")) == "echo"
-    ]
-    if not echo_commands:
-        return []
-
-    if not any(marker in line for marker in ("$(", "`", "<(", ">(")):
-        return []
-
-    try:
-        import bashlex
-    except ModuleNotFoundError as error:
-        if error.name != "bashlex":
-            raise
-        return _echo_removal_commands_without_parser(line)
-
-    removals = {"rm", "unlink", "shred", "rmdir"}
-    found = []
-    visited = set()
-
-    def visit(node, in_echo=False, in_substitution=False):
-        if not hasattr(node, "kind") or id(node) in visited:
-            return
-        visited.add(id(node))
-
-        kind = getattr(node, "kind", "")
-        if kind == "command":
-            words = [part.word for part in getattr(node, "parts", [])
-                     if getattr(part, "kind", "") == "word"]
-            is_echo = bool(words) and os.path.basename(words[0]) == "echo"
-            if in_echo and in_substitution and words:
-                program = os.path.basename(words[0])
-                if program in removals:
-                    start, end = node.pos
-                    found.append(line[start:end])
-            in_echo = in_echo or is_echo
-        elif kind in ("commandsubstitution", "processsubstitution") and in_echo:
-            in_substitution = True
-
-        for value in vars(node).values():
-            if hasattr(value, "kind"):
-                visit(value, in_echo, in_substitution)
-            elif isinstance(value, list):
-                for child in value:
-                    if hasattr(child, "kind"):
-                        visit(child, in_echo, in_substitution)
-
-    for node in bashlex.parse(line):
-        visit(node)
-    return found
-
-
-def _echo_removal_commands_without_parser(line):
-    """Handle direct echo substitutions when the optional shell parser is unavailable."""
-    echo = re.match(r"\s*echo\b", line)
-    if not echo or not any(marker in line[echo.end():] for marker in ("$(", "`")):
-        return []
-
-    body = re.sub(r"'(?:\\.|[^'])*'", "", line[echo.end():])
-    substitutions = re.compile(
-        r"(?<!\\)\$\((?P<paren>[^)]*)\)|(?<!\\)`(?P<backtick>[^`]*)`"
-    )
-    removal = re.compile(
-        r"(?:^|[;&|]\s*)(?:sudo\s+)*(?:[\w.-]+/)*(?:rm|unlink|shred|rmdir)\b[^\n]*"
-    )
-    found = []
-    for substitution in substitutions.finditer(body):
-        commands = substitution.group("paren") or substitution.group("backtick")
-        match = removal.search(commands)
-        if match:
-            found.append(match.group(0).strip())
-    return found
-
-
 def error_mode(line, code, errfile):
+    """Explain why `line` failed: its exit code, a hint for common codes, and the
+    last few lines of error output the hook saved in `errfile`. Always returns 0."""
     print(f"[explain-term] `{line}` failed with exit code {code}.", file=sys.stderr)
     if code in EXIT_CODES:
         print(EXIT_CODES[code], file=sys.stderr)
@@ -190,6 +158,7 @@ def error_mode(line, code, errfile):
 
 
 def main(argv=None):
+    """Run one mode and return the exit code. Never raises (see the module docstring)."""
     try:
         args = parse_args(sys.argv[1:] if argv is None else argv)
         if args.mode == "explain":

@@ -1,10 +1,12 @@
 # rules for detecting programs/args
-# if a dictionary in rules contains 4 items, it contains non-program args
+# a rule with an `args` list only matches when one of those arguments is used
+# the first matching rule wins, so keep the specific rules above the general ones
+# levels: safe, caution, danger
 
 
 rules:
   - program: rm
-    args: ["/", "/*", "~", "~/", "*", ".", "..", "$HOME"]
+    args: ["/", "/*", "~", "~/", "~/*", "*", ".", "..", "$HOME", "$HOME/*", "${HOME}", "${HOME}/*"]
     level: danger
     reason: Deletes everything under a top-level or current folder, with no undo.
   - program: rm

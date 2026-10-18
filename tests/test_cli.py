@@ -62,32 +62,18 @@ def test_unknown_command_remains_safe():
     assert run("explain", "--", "qweilrghqiwle").returncode == 0
 
 
-def test_unrelated_command_does_not_require_bashlex(monkeypatch):
-    import sys
-
-    monkeypatch.setitem(sys.modules, "bashlex", None)
-
-    assert cli.explain_mode("saveoff") == cli.RUN
-
-
-def test_echo_removal_is_dangerous_without_bashlex(monkeypatch):
-    import sys
-
-    monkeypatch.setitem(sys.modules, "bashlex", None)
+def test_echo_removal_is_dangerous(monkeypatch):
     shown = {}
     monkeypatch.setattr(render, "show", lambda rec: shown.update(rec) or "cancelled")
 
     assert cli.explain_mode("echo $(rm -rf *)") == cli.CANCEL
     assert shown["risk"] == "danger"
     assert shown["reversible"] is False
-    assert "echo command substitution runs a file-removal command." in shown["rule_messages"]
-    assert {"command": "rm -rf * (inside echo substitution)", "risk": "danger"} in shown["segments"]
+    assert "A command substitution runs a file-removal command." in shown["rule_messages"]
+    assert {"command": "rm -rf * (inside command substitution)", "risk": "danger"} in shown["segments"]
 
 
-def test_echo_that_quotes_removal_text_is_safe_without_bashlex(monkeypatch):
-    import sys
-
-    monkeypatch.setitem(sys.modules, "bashlex", None)
+def test_echo_that_quotes_removal_text_is_safe(monkeypatch):
     monkeypatch.setattr(render, "show", lambda rec: rec["risk"] == "safe" and "ran")
 
     assert cli.explain_mode("echo '$(rm -rf *)'") == cli.RUN
@@ -98,8 +84,8 @@ def test_echo_with_file_removal_substitution_is_dangerous():
 
     assert result.returncode == 1
     assert "DANGER" in result.stderr
-    assert "echo command substitution runs a file-removal command" in result.stderr
-    assert "rm -rf * (inside echo substitution)" in result.stderr
+    assert "A command substitution runs a file-removal command" in result.stderr
+    assert "rm -rf * (inside command substitution)" in result.stderr
 
 
 def test_echo_that_only_prints_removal_text_remains_safe():
@@ -144,3 +130,56 @@ def test_error_mode_shows_code_and_error_text(tmp_path):
 
 def test_bad_arguments_never_block_the_command():
     assert run().returncode == 0
+
+
+def capture(monkeypatch):
+    shown = {}
+    monkeypatch.setattr(render, "show", lambda rec: shown.update(rec) or "cancelled")
+    return shown
+
+
+def test_second_line_of_a_pasted_command_is_checked(monkeypatch):
+    shown = capture(monkeypatch)
+    cli.explain_mode("ls\nrm -rf ~")
+    assert shown["risk"] == "danger"
+
+
+def test_removal_inside_any_substitution_is_dangerous(monkeypatch):
+    for line in ("ls $(rm -rf ~)", 'ls "$(rm x)"', "cat <(rm x)", "echo $((1+2)) $(rm x)"):
+        shown = capture(monkeypatch)
+        cli.explain_mode(line)
+        assert shown["risk"] == "danger", line
+        assert "A command substitution runs a file-removal command." in shown["rule_messages"], line
+
+
+def test_harmless_substitution_stays_safe(monkeypatch):
+    shown = capture(monkeypatch)
+    cli.explain_mode("echo $(date)")
+    assert shown["risk"] == "safe"
+
+
+def test_unclosed_quote_asks_instead_of_crashing(monkeypatch):
+    shown = capture(monkeypatch)
+    assert cli.explain_mode('"; rm -rf ~') == cli.CANCEL
+    assert shown["risk"] == "caution"
+    assert "quote" in shown["summary"]
+
+
+def test_unclosed_quote_without_keyboard_is_cancelled():
+    result = run("explain", "--", '"; rm -rf ~')
+    assert result.returncode == 1
+    assert "internal error" not in result.stderr
+
+
+def test_rules_look_through_wrappers(monkeypatch):
+    for line in ("/bin/rm -rf /", "env rm -rf /", "FOO=1 rm -rf ~", "xargs rm -rf /"):
+        shown = capture(monkeypatch)
+        cli.explain_mode(line)
+        assert shown["risk"] == "danger", line
+        assert "Deletes everything under a top-level or current folder, with no undo." in shown["rule_messages"], line
+
+
+def test_command_v_is_only_a_lookup(monkeypatch):
+    shown = capture(monkeypatch)
+    cli.explain_mode("command -v rm")
+    assert shown["risk"] == "safe"
