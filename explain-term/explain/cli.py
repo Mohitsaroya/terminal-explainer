@@ -1,15 +1,88 @@
+"""Entry point the zsh hook calls.
+
+    cli.py explain -- "<command line>"
+        Explains the command and asks before risky ones.
+        Exit 0 = run it, 1 = cancel, 3 = cancel but keep the text so it can be edited.
+    cli.py error --code N [--errfile FILE] -- "<command line>"
+        Explains why a command just failed.
+
+Any crash exits 0 so a bug in explain-term never stops a command from running.
+"""
+import argparse
+import os
 import sys
 
-def main():
-	command = sys.argv[3]
-	print(f'[explain-term] You typed: {command}')
+# Run as a plain script by the hook, so make the `explain` package importable.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-	if command.startswith("rm"):
-		answer = input("This can delete files. Would you like to run it? (y/n) ")
-		print()
-		if answer.lower == "y":
-			return 0
-		return 1
-	return 0
+RUN, CANCEL, EDIT = 0, 1, 3
 
-sys.exit(main())
+# Common exit codes and what they mean for a beginner.
+EXIT_CODES = {
+    126: "The file exists but is not allowed to run (check its permissions).",
+    127: "The command was not found. Check the spelling, or install the program.",
+}
+
+
+def parse_args(argv):
+    p = argparse.ArgumentParser(prog="explain-term")
+    sub = p.add_subparsers(dest="mode", required=True)
+    ex = sub.add_parser("explain")
+    ex.add_argument("command", nargs="+")
+    er = sub.add_parser("error")
+    er.add_argument("--code", type=int, required=True)
+    er.add_argument("--errfile")
+    er.add_argument("command", nargs="+")
+    args = p.parse_args(argv)
+    args.command = " ".join(args.command)
+    return args
+
+
+def explain_mode(line):
+    from explain import context, explainer, render
+
+    cmds = explainer.quick_parse(line)
+    ctx = context.resolve(cmds)
+    rec = explainer.explain(line, cmds, ctx)
+    rec["command"] = line
+    rec["confirm_word"] = ctx.confirm_word()
+    decision = render.show(rec)
+    if decision == "ran":
+        return RUN
+    return EDIT if decision == "edited" else CANCEL
+
+
+def error_mode(line, code, errfile):
+    print(f"[explain-term] `{line}` failed with exit code {code}.", file=sys.stderr)
+    if code in EXIT_CODES:
+        print(EXIT_CODES[code], file=sys.stderr)
+    if errfile:
+        try:
+            with open(errfile, encoding="utf-8", errors="replace") as f:
+                lines = [l.rstrip() for l in f if l.strip()]
+        except OSError:
+            lines = []
+        if lines:
+            print("The error said:", file=sys.stderr)
+            for l in lines[-5:]:
+                print(f"  {l}", file=sys.stderr)
+    return 0
+
+
+def main(argv=None):
+    try:
+        args = parse_args(sys.argv[1:] if argv is None else argv)
+        if args.mode == "explain":
+            return explain_mode(args.command)
+        return error_mode(args.command, args.code, args.errfile)
+    except SystemExit:        # bad arguments: argparse already printed why
+        return RUN
+    except KeyboardInterrupt:
+        return CANCEL
+    except Exception as e:   # noqa: BLE001 - never block the user's command
+        print(f"[explain-term] internal error, running the command anyway: {e}", file=sys.stderr)
+        return RUN
+
+
+if __name__ == "__main__":
+    sys.exit(main())
