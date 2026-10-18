@@ -28,9 +28,22 @@ hints = {
     "danger": "Run: type the word + Enter | Cancel: Esc | Edit: type e + Enter"
 }
 
-SAFE_ONE_LINER = True # if false = print nothing
+MAX_EXPLANATION_WIDTH = 96
 
-console = Console(stderr=True)
+
+def _explanation_width() -> int:
+    try:
+        terminal_width = os.get_terminal_size(sys.stderr.fileno()).columns
+    except OSError:
+        return MAX_EXPLANATION_WIDTH
+    return min(terminal_width, MAX_EXPLANATION_WIDTH)
+
+
+def _new_console() -> Console:
+    return Console(stderr=True, width=_explanation_width())
+
+
+console = _new_console()
 
 # Safety Helpers
 # Private variables and functions 
@@ -225,12 +238,12 @@ def show(rec: dict, con: Console = None, *, panel_printed: bool = False):
     risk = rec.get("risk")
  
     if risk == "safe":
-        if SAFE_ONE_LINER and not panel_printed and rec.get("summary"):
-            con.print(Text.assemble(("✓ ", "green"), (_clean(rec["summary"]), "dim")))
         rec["decision"], rec["response_ms"] = "ran", 0
         return "ran"
  
     if not panel_printed:
+        if os.environ.get("EXPLAIN_FROM_ZLE") == "1":
+            con.print()
         con.print(build_panel(rec))
     t0 = time.monotonic()
     decision = confirm(rec, con)

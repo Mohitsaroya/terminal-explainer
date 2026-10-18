@@ -12,6 +12,7 @@ import argparse
 import os
 import re
 import sys
+from pathlib import Path
 
 # Run as a plain script by the hook, so the project packages are importable.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
@@ -45,6 +46,9 @@ def explain_mode(line):
     from rules.rules import checker
 
     cmds = explainer.quick_parse(line)
+    if len(cmds) == 1 and os.path.basename(cmds[0].get("program", "")) in {"source", "."}:
+        return RUN
+
     ctx = context.resolve(cmds)
     rec = explainer.explain(line, cmds, ctx)
     rec["command"] = line
@@ -82,6 +86,9 @@ def explain_mode(line):
 
     decision = render.show(rec)
     if decision == "ran":
+        safe_summary_file = os.environ.get("EXPLAIN_SAFE_SUMMARY_FILE")
+        if rec["risk"] == "safe" and safe_summary_file and rec.get("summary"):
+            Path(safe_summary_file).write_text(rec["summary"], encoding="utf-8")
         return RUN
     if decision == "edited":
         return EDIT

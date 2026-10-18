@@ -1,3 +1,4 @@
+import os
 from io import StringIO
 
 from rich.console import Console
@@ -24,7 +25,7 @@ records = [
 
 
 def draw(rec):
-    con = Console(record=True, width=100)
+    con = Console(record=True, width=render.MAX_EXPLANATION_WIDTH)
     con.print(render.build_panel(rec))
     return con.export_text()
 
@@ -45,13 +46,33 @@ def test_panels_show_label_summary_and_rule_messages():
     assert "Edit: type e + Enter" in caution_text
 
 
+def test_explanation_panel_uses_the_target_width():
+    lines = draw(records[2]).splitlines()
+
+    assert max(map(len, lines)) == render.MAX_EXPLANATION_WIDTH
+
+
 def test_segments_are_listed():
     text = draw(render.DEMO[2])
     assert "SAFE   cd /tmp/old" in text and "DANGER rm -rf *" in text
 
 
 def test_safe_runs_without_asking():
-    assert render.show(dict(records[0])) == "ran"
+    output = StringIO()
+    con = Console(file=output)
+
+    assert render.show(dict(records[0]), con) == "ran"
+    assert output.getvalue() == ""
+
+
+def test_explanation_width_is_capped_but_fits_narrower_terminals(monkeypatch):
+    monkeypatch.setattr(render.os, "get_terminal_size", lambda fd: os.terminal_size((160, 24)))
+    assert render._explanation_width() == render.MAX_EXPLANATION_WIDTH
+    assert render._new_console().width == render.MAX_EXPLANATION_WIDTH
+
+    monkeypatch.setattr(render.os, "get_terminal_size", lambda fd: os.terminal_size((80, 24)))
+    assert render._explanation_width() == 80
+    assert render._new_console().width == 80
 
 
 def test_no_keyboard_cancels_instead_of_crashing(monkeypatch):

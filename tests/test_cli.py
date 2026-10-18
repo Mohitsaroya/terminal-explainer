@@ -13,7 +13,49 @@ def run(*args, stdin=""):
 
 
 def test_safe_command_runs():
-    assert run("explain", "--", "ls").returncode == 0
+    result = run("explain", "--", "ls")
+
+    assert result.returncode == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_safe_command_has_no_explainer_output(monkeypatch, capsys):
+    shown = []
+    monkeypatch.setattr(render, "show", lambda rec: shown.append(rec) or "ran")
+
+    assert cli.explain_mode("ls") == cli.RUN
+    assert len(shown) == 1
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert output.err == ""
+
+
+def test_safe_command_signals_hook_with_full_explanation(tmp_path, monkeypatch):
+    summary_file = tmp_path / "safe-summary"
+    monkeypatch.setenv("EXPLAIN_SAFE_SUMMARY_FILE", str(summary_file))
+
+    assert cli.explain_mode("ls") == cli.RUN
+    assert summary_file.read_text(encoding="utf-8") == (
+        "Lists the files and folders in this folder."
+    )
+
+
+def test_risky_command_does_not_signal_safe_summary(tmp_path, monkeypatch):
+    summary_file = tmp_path / "safe-summary"
+    monkeypatch.setenv("EXPLAIN_SAFE_SUMMARY_FILE", str(summary_file))
+    monkeypatch.setattr(render, "show", lambda rec: "cancelled")
+
+    assert cli.explain_mode("rm notes.txt") == cli.CANCEL
+    assert not summary_file.exists()
+
+
+def test_sourcing_hook_bypasses_explanation(monkeypatch):
+    shown = []
+    monkeypatch.setattr(render, "show", lambda rec: shown.append(rec) or "ran")
+
+    assert cli.explain_mode("source /path/to/explain.zsh") == cli.RUN
+    assert shown == []
 
 
 def test_unknown_command_remains_safe():

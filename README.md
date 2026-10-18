@@ -54,6 +54,8 @@ source B-UNIX/hook/explain.zsh
 
 The hook is active only in the current shell. Use `safeoff` to turn it off and
 `safeon` to turn it back on. (These names start with `safe`, not `save`.)
+The prompt includes the current directory's full path and updates when you
+change directories.
 
 ## Try it safely
 
@@ -73,7 +75,7 @@ command while testing.
 
 | Risk | Behavior |
 |---|---|
-| Safe | Shows a short explanation and runs the command. |
+| Safe | Shows a green ✓ and its short explanation, then runs the command. No prompt. |
 | Warning | Requires typing `yes` and pressing Enter; Esc cancels; type `e` to return to the shell prompt and edit. |
 | Danger | Requires the displayed confirmation word and Enter; Esc cancels; type `e` to return to the shell prompt and edit. |
 
