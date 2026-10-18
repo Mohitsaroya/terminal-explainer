@@ -15,5 +15,5 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-# the `explain` package lives in explain-term/; parser.py and rules/ are at the repo root
-pythonpath = ["explain-term", "."]
+# the `explain` package lives in B-UNIX/; parser.py and rules/ are at the repo root
+pythonpath = ["B-UNIX", "."]

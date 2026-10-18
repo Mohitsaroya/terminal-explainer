@@ -4,7 +4,7 @@ from pathlib import Path
 
 from explain import cli, render
 
-CLI = Path(__file__).parent.parent / "explain-term" / "explain" / "cli.py"
+CLI = Path(__file__).parent.parent / "B-UNIX" / "explain" / "cli.py"
 
 
 def run(*args, stdin=""):

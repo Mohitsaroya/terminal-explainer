@@ -10,9 +10,11 @@ typeset -g EXPLAIN_CLI="${${(%):-%x}:A:h:h}/explain/cli.py"
 #the repo's virtual environment (made by `uv sync`), which has rich and pyyaml installed
 typeset -g EXPLAIN_VENV_PY="${${(%):-%x}:A:h:h:h}/.venv/bin/python"
 
-#Python to run cli.py with: the repo's .venv if it exists, otherwise the system python3
+#Prefer an activated environment, then the repo's .venv, then system Python.
 explain_py(){
-	if [[ -x $EXPLAIN_VENV_PY ]]; then
+	if [[ -n "$VIRTUAL_ENV" && -x "$VIRTUAL_ENV/bin/python" ]]; then
+		"$VIRTUAL_ENV/bin/python" "$@"
+	elif [[ -x $EXPLAIN_VENV_PY ]]; then
 		"$EXPLAIN_VENV_PY" "$@"
 	else
 		python3 "$@"
