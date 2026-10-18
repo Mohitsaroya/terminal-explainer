@@ -2,7 +2,7 @@
 
     cli.py explain -- "<command line>"
         Explains the command and asks before risky ones.
-        Exit 0 = run it, 1 = cancel, 3 = cancel but keep the text so it can be edited.
+        Exit 0 = run it, 1 = cancel, 3 = return to the shell prompt for editing.
     cli.py error --code N [--errfile FILE] -- "<command line>"
         Explains why a command just failed.
 
@@ -12,7 +12,8 @@ import argparse
 import os
 import sys
 
-# Run as a plain script by the hook, so make the `explain` package importable.
+# Run as a plain script by the hook, so the project packages are importable.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 RUN, CANCEL, EDIT = 0, 1, 3
@@ -40,16 +41,39 @@ def parse_args(argv):
 
 def explain_mode(line):
     from explain import context, explainer, render
+    from rules.rules import checker
 
     cmds = explainer.quick_parse(line)
     ctx = context.resolve(cmds)
     rec = explainer.explain(line, cmds, ctx)
     rec["command"] = line
     rec["confirm_word"] = ctx.confirm_word()
+
+    rule_messages = []
+    segments = []
+    for cmd in cmds:
+        program = cmd.get("program", "")
+        args = cmd.get("args", [])
+        rule_risk, reason = checker([program, *args])
+        command = " ".join([program, *args])
+        segment = explainer.explain("", [cmd])
+        segment_risk = explainer.merge_risk(segment["risk"], rule_risk)
+        rec["risk"] = explainer.merge_risk(rec["risk"], rule_risk)
+        segments.append({"command": command, "risk": segment_risk})
+        if rule_risk != "safe" and reason not in rule_messages:
+            rule_messages.append(reason)
+
+    if rule_messages:
+        rec["rule_messages"] = rule_messages
+    if len(segments) > 1:
+        rec["segments"] = segments
+
     decision = render.show(rec)
     if decision == "ran":
         return RUN
-    return EDIT if decision == "edited" else CANCEL
+    if decision == "edited":
+        return EDIT
+    return CANCEL
 
 
 def error_mode(line, code, errfile):

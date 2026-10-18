@@ -35,11 +35,11 @@ my_enter(){
 	zle -I
 	#Pass to cli.py
 	explain_py "$EXPLAIN_CLI" explain -- "$BUFFER" </dev/tty >/dev/tty 2>&1
-	# 1 = user said no, 3 = user wants to edit the command, anything else runs it.
-	# If Python crashes, run the command anyway so a bug never locks the user out.
+	# 1 = user cancelled, 3 = return to the prompt for editing. If Python
+	# crashes, run the command anyway so a bug never locks the user out.
 	case $? in
 		1) BUFFER=""; zle reset-prompt ;;
-		3) zle reset-prompt ;;	#keeps the typed command so it can be changed
+		3) zle reset-prompt ;;
 		*) zle .accept-line ;;
 	esac
 }

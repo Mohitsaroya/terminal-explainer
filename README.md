@@ -67,6 +67,10 @@ source hook/explain.zsh             # turn it on in your zsh; EXPLAIN_OFF=1 turn
 pytest
 ```
 
+The CLI checks each parsed command against `rules/rules.yaml` using `rules/rules.py`.
+For compound commands, the highest risk from the glossary or any matching rule is used,
+and matching rule reasons are shown in the explanation panel.
+
 ## Layout
 
 ```

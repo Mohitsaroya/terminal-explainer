@@ -1,3 +1,5 @@
+from io import StringIO
+
 from rich.console import Console
 
 from explain import render
@@ -33,7 +35,14 @@ def test_panels_show_label_summary_and_rule_messages():
         assert rec["summary"] in text
         for msg in rec["rule_messages"]:
             assert msg in text
-    assert "Type Documents to run" in draw(records[2])
+    text = draw(records[2])
+    assert "Run: type Documents + Enter" in text
+    assert "Cancel: Esc" in text
+    assert "Edit: type e + Enter" in text
+    caution_text = draw(records[1])
+    assert "Run: type yes + Enter" in caution_text
+    assert "Cancel: Esc" in caution_text
+    assert "Edit: type e + Enter" in caution_text
 
 
 def test_segments_are_listed():
@@ -45,6 +54,55 @@ def test_safe_runs_without_asking():
     assert render.show(dict(records[0])) == "ran"
 
 
-def test_no_keyboard_cancels_instead_of_crashing():
+def test_no_keyboard_cancels_instead_of_crashing(monkeypatch):
     # pytest's stdin is not a terminal
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: None)
     assert render.confirm(dict(records[1])) == "cancelled"
+
+
+def test_danger_requires_confirmation_word(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "Documents")
+    assert render.confirm(dict(records[2])) == "ran"
+
+
+def test_danger_edit_shortcut_returns_to_prompt(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "e")
+    assert render.confirm(dict(records[2])) == "edited"
+
+
+def test_escape_cancels_danger_confirmation(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: None)
+    assert render.confirm(dict(records[2])) == "cancelled"
+
+
+def test_wrong_danger_confirmation_word_cancels(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "document")
+    assert render.confirm(dict(records[2])) == "cancelled"
+
+
+def test_caution_confirmation_requires_yes(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "yes")
+    assert render.confirm(dict(records[1])) == "ran"
+
+
+def test_caution_edit_shortcut_returns_to_prompt(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "e")
+    assert render.confirm(dict(records[1])) == "edited"
+
+
+def test_caution_confirmation_wrong_word_cancels(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "y")
+    assert render.confirm(dict(records[1])) == "cancelled"
+
+
+def test_escape_cancels_caution_confirmation(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: None)
+    assert render.confirm(dict(records[1])) == "cancelled"
+
+
+def test_danger_confirmation_prompt_does_not_repeat_panel_instructions():
+    output = StringIO()
+    con = Console(file=output)
+
+    assert render.confirm(dict(records[2]), con) == "cancelled"
+    assert output.getvalue() == "Confirm: "
