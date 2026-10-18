@@ -16,6 +16,54 @@ def test_safe_command_runs():
     assert run("explain", "--", "ls").returncode == 0
 
 
+def test_unknown_command_remains_safe():
+    assert run("explain", "--", "qweilrghqiwle").returncode == 0
+
+
+def test_unrelated_command_does_not_require_bashlex(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "bashlex", None)
+
+    assert cli.explain_mode("saveoff") == cli.RUN
+
+
+def test_echo_removal_is_dangerous_without_bashlex(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "bashlex", None)
+    shown = {}
+    monkeypatch.setattr(render, "show", lambda rec: shown.update(rec) or "cancelled")
+
+    assert cli.explain_mode("echo $(rm -rf *)") == cli.CANCEL
+    assert shown["risk"] == "danger"
+    assert shown["reversible"] is False
+    assert "echo command substitution runs a file-removal command." in shown["rule_messages"]
+    assert {"command": "rm -rf * (inside echo substitution)", "risk": "danger"} in shown["segments"]
+
+
+def test_echo_that_quotes_removal_text_is_safe_without_bashlex(monkeypatch):
+    import sys
+
+    monkeypatch.setitem(sys.modules, "bashlex", None)
+    monkeypatch.setattr(render, "show", lambda rec: rec["risk"] == "safe" and "ran")
+
+    assert cli.explain_mode("echo '$(rm -rf *)'") == cli.RUN
+
+
+def test_echo_with_file_removal_substitution_is_dangerous():
+    result = run("explain", "--", "echo $(rm -rf *)")
+
+    assert result.returncode == 1
+    assert "DANGER" in result.stderr
+    assert "echo command substitution runs a file-removal command" in result.stderr
+    assert "rm -rf * (inside echo substitution)" in result.stderr
+
+
+def test_echo_that_only_prints_removal_text_remains_safe():
+    assert run("explain", "--", "echo rm -rf *").returncode == 0
+
+
 def test_risky_command_without_keyboard_is_cancelled():
     assert run("explain", "--", "rm notes.txt").returncode == 1
 

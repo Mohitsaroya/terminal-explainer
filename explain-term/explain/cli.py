@@ -10,6 +10,7 @@ Any crash exits 0 so a bug in explain-term never stops a command from running.
 """
 import argparse
 import os
+import re
 import sys
 
 # Run as a plain script by the hook, so the project packages are importable.
@@ -63,6 +64,17 @@ def explain_mode(line):
         if rule_risk != "safe" and reason not in rule_messages:
             rule_messages.append(reason)
 
+    echo_removals = _echo_removal_commands(line, cmds)
+    if echo_removals:
+        rec["risk"] = "danger"
+        rec["reversible"] = False
+        reason = "echo command substitution runs a file-removal command."
+        rule_messages.append(reason)
+        segments.extend(
+            {"command": f"{command} (inside echo substitution)", "risk": "danger"}
+            for command in echo_removals
+        )
+
     if rule_messages:
         rec["rule_messages"] = rule_messages
     if len(segments) > 1:
@@ -74,6 +86,83 @@ def explain_mode(line):
     if decision == "edited":
         return EDIT
     return CANCEL
+
+
+def _echo_removal_commands(line, cmds):
+    """Find removal commands that execute inside an echo substitution."""
+    echo_commands = [
+        cmd for cmd in cmds
+        if os.path.basename(cmd.get("program", "")) == "echo"
+    ]
+    if not echo_commands:
+        return []
+
+    if not any(marker in line for marker in ("$(", "`", "<(", ">(")):
+        return []
+
+    try:
+        import bashlex
+    except ModuleNotFoundError as error:
+        if error.name != "bashlex":
+            raise
+        return _echo_removal_commands_without_parser(line)
+
+    removals = {"rm", "unlink", "shred", "rmdir"}
+    found = []
+    visited = set()
+
+    def visit(node, in_echo=False, in_substitution=False):
+        if not hasattr(node, "kind") or id(node) in visited:
+            return
+        visited.add(id(node))
+
+        kind = getattr(node, "kind", "")
+        if kind == "command":
+            words = [part.word for part in getattr(node, "parts", [])
+                     if getattr(part, "kind", "") == "word"]
+            is_echo = bool(words) and os.path.basename(words[0]) == "echo"
+            if in_echo and in_substitution and words:
+                program = os.path.basename(words[0])
+                if program in removals:
+                    start, end = node.pos
+                    found.append(line[start:end])
+            in_echo = in_echo or is_echo
+        elif kind in ("commandsubstitution", "processsubstitution") and in_echo:
+            in_substitution = True
+
+        for value in vars(node).values():
+            if hasattr(value, "kind"):
+                visit(value, in_echo, in_substitution)
+            elif isinstance(value, list):
+                for child in value:
+                    if hasattr(child, "kind"):
+                        visit(child, in_echo, in_substitution)
+
+    for node in bashlex.parse(line):
+        visit(node)
+    return found
+
+
+def _echo_removal_commands_without_parser(line):
+    """Handle direct echo substitutions when the optional shell parser is unavailable."""
+    echo = re.match(r"\s*echo\b", line)
+    if not echo or not any(marker in line[echo.end():] for marker in ("$(", "`")):
+        return []
+
+    body = re.sub(r"'(?:\\.|[^'])*'", "", line[echo.end():])
+    substitutions = re.compile(
+        r"(?<!\\)\$\((?P<paren>[^)]*)\)|(?<!\\)`(?P<backtick>[^`]*)`"
+    )
+    removal = re.compile(
+        r"(?:^|[;&|]\s*)(?:sudo\s+)*(?:[\w.-]+/)*(?:rm|unlink|shred|rmdir)\b[^\n]*"
+    )
+    found = []
+    for substitution in substitutions.finditer(body):
+        commands = substitution.group("paren") or substitution.group("backtick")
+        match = removal.search(commands)
+        if match:
+            found.append(match.group(0).strip())
+    return found
 
 
 def error_mode(line, code, errfile):
