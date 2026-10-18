@@ -43,6 +43,16 @@ NOT_FILES = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
 # Shell words that are syntax, not programs: in `for f in *; do rm $f; done` the program is rm.
 SHELL_KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "}",
                   "done", "fi", "esac", "time"}
+# Asking a program for its help page or version runs nothing else, so `rm --help` is safe.
+HELP_FLAGS = {"--help", "-help", "--usage", "-?"}
+VERSION_FLAGS = {"--version", "-version"}
+# Most programs treat a lone -h as "help", but these use it for something else
+# (`df -h` = readable sizes, `shutdown -h` = halt), so for them -h is a normal flag.
+H_IS_NOT_HELP = {"ls", "df", "du", "free", "sort", "grep", "shutdown", "halt", "reboot",
+                 "poweroff", "ssh", "scp", "ping", "nc", "chown", "chgrp", "mysql", "psql"}
+# Programs whose first word is a subcommand: `git push --help` is help for `git push`.
+SUBCOMMAND_PROGRAMS = {"git", "brew", "npm", "pip", "pip3", "docker", "cargo", "apt",
+                       "apt-get", "kubectl", "go", "uv", "conda", "gh", "yarn", "pnpm"}
 # Loop and case headers (`for f in *`) don't run anything themselves, so they are dropped.
 SKIP_HEADERS = {"for", "select", "case", "function"}
 # `FOO=1 rm x` sets FOO for rm; the program is still rm.
@@ -63,7 +73,9 @@ def explain(line: str, cmds=None, ctx=None) -> dict:
         cmds = list(cmds) if cmds else quick_parse(line)
     except ValueError:                       # e.g. an unclosed quote
         cmds = []
-    progs = [strip_wrappers(_prog(c), _args(c))[0] for c in cmds]
+    # programs that really run (`rm --help` deletes nothing, so it doesn't count as rm)
+    progs = [p for p, a in (strip_wrappers(_prog(c), _args(c)) for c in cmds)
+             if not help_request(p, a)]
 
     try:
         out, source = _from_cache(line), "cache"
@@ -158,8 +170,15 @@ def _describe(prog: str, args: list):
             return inner, flags, merge_risk("danger", risk), undo
         return inner, flags, risk, undo
 
+    if prog.startswith("-"):                          # someone typed just `--help`
+        return (f"{prog} is an option, not a command. Put it after a program's name, "
+                f"like `ls {prog}`."), [], "safe", True
+    kind = help_request(prog, args)
+    if kind:
+        return _help_summary(prog, args, kind)
+
     entry = glossary().get(prog) or {}
-    words = [a for a in args if not a.startswith("-")]
+    words = _operands(args)
     # programs like git and brew: "git push" uses the 'push' entry
     sub = (entry.get("subcommands") or {}).get(words[0]) if words else None
     if sub:
@@ -169,6 +188,8 @@ def _describe(prog: str, args: list):
     shown = " ".join(words)
     shown = shown[:40] + "..." if len(shown) > 43 else shown
     template = chosen.get("summary") or f"Runs the program '{prog}'. We don't have an explanation for it yet."
+    if not words and chosen.get("summary_no_args"):  # `cd` alone goes home, `python3` alone opens a prompt
+        template = chosen["summary_no_args"]
     try:
         summary = template.format(args=shown or "the given items",
                                   where=f"in {shown}" if shown else "in this folder")
@@ -179,10 +200,64 @@ def _describe(prog: str, args: list):
     return summary, _flag_meanings(args, entry.get("flags") or {}), risk, can_undo
 
 
+def _operands(args: list) -> list:
+    """The words that aren't flags. After `--` every word counts: `rm -- -x` deletes "-x"."""
+    if "--" in args:
+        i = args.index("--")
+        return [a for a in args[:i] if not a.startswith("-")] + args[i + 1:]
+    return [a for a in args if not a.startswith("-")]
+
+
+def help_request(prog: str, args: list):
+    """"help" if the command only asks for its help page, "version" for --version, else None.
+
+    `rm --help`, `git push --help`, `python3 -h` and `curl --version` qualify.
+    Anything else on the line keeps the normal explanation, so `rm -rf ~ --help`
+    is still treated as a real rm.
+    """
+    entry = glossary().get(prog) or {}
+    if args and not args[0].startswith("-") and (prog in SUBCOMMAND_PROGRAMS or entry.get("subcommands")):
+        args = args[1:]                               # skip the subcommand word
+    if not args:
+        return None
+    kinds = set()
+    for a in args:                                    # a `--` ends the loop via the else branch
+        if a in HELP_FLAGS or (a == "-h" and len(args) == 1 and prog not in H_IS_NOT_HELP):
+            kinds.add("help")
+        elif a in VERSION_FLAGS:
+            kinds.add("version")
+        else:
+            return None
+    return "help" if "help" in kinds else "version"
+
+
+def _help_summary(prog: str, args: list, kind: str):
+    """(summary, extra lines, risk, can_undo) for a help or version request."""
+    entry = glossary().get(prog) or {}
+    sub = args[0] if not args[0].startswith("-") else None
+    name = f"{prog} {sub}" if sub else prog
+    if kind == "version":
+        return f"Shows which version of {name} is installed. Nothing is changed.", [], "safe", True
+    lines = []
+    chosen = (entry.get("subcommands") or {}).get(sub) if sub else entry
+    if chosen and chosen.get("summary"):
+        # what the program itself does, so the help page makes more sense
+        try:
+            what = chosen["summary"].format(args="the given items", where="in a folder")
+        except (KeyError, IndexError, ValueError):
+            what = chosen["summary"]
+        lines.append(f"What {name} does: {what}")
+    lines.append(f"For the full manual, type: man {prog} (press q to quit)")
+    return (f"Shows the help for {name}: how to use it and what its options mean. "
+            "Nothing is run or changed."), lines, "safe", True
+
+
 def _flag_meanings(args: list, known: dict) -> list:
     """['-rf'] -> ['-r: also deletes folders...', '-f: never asks...'], in order, no repeats."""
     out, seen = [], set()
     for a in args:
+        if a == "--":                                 # everything after -- is a name, not a flag
+            break
         if not a.startswith("-") or a == "-":
             continue
         if a.startswith("--") or a in known:          # long flag, or listed as-is (e.g. -9)

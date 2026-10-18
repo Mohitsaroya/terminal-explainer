@@ -110,9 +110,12 @@ def _check_rules(program, args):
     from explain import context, explainer
     from rules.rules import checker
 
+    name = os.path.basename(program)
+    if explainer.help_request(name, args) or name.startswith("-"):
+        return "safe", ""                           # `rm --help` only prints help
     risk, reason = checker([program, *args])
-    inner, inner_args = context.strip_wrappers(os.path.basename(program), args)
-    if inner != os.path.basename(program):
+    inner, inner_args = context.strip_wrappers(name, args)
+    if inner != name and not explainer.help_request(inner, inner_args):
         inner_risk, inner_reason = checker([inner, *inner_args])
         if explainer.merge_risk(risk, inner_risk) != risk:
             risk, reason = inner_risk, inner_reason
