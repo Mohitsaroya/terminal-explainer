@@ -89,6 +89,10 @@ quote is shown as a WARNING, because B-UNIX can't tell what it would run. This
 is not a complete Zsh parser; other unsupported shell syntax may not be fully
 understood.
 
+Asking a program for its help page or version (`rm --help`, `git push --help`,
+`curl --version`) is always SAFE and is explained as such, because nothing else
+runs. Typing an option on its own, like `--help`, explains how to use it.
+
 Unknown commands are not automatically classified as risky just because they are
 unknown. The project is an early prototype, and explanations/rules do not cover
 every command.

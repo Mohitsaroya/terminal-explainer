@@ -3,6 +3,12 @@
 # if there are flags with the given command then there is a flags
 # section and their brief explanations.
 #
+# Optional keys:
+#   summary_no_args  used instead of summary when the command has no words after it
+#                    (`cd` alone goes home, `python3` alone opens a prompt)
+#   subcommands      for programs like git: `git push` uses the `push` entry
+#   reversible       set to false when the result can't be undone
+#
 
 programs:
   ls:
@@ -16,12 +22,14 @@ programs:
       -t: "sorts by date, newest first"
   cd:
     summary: "Moves you into the folder {args}."
+    summary_no_args: "Moves you to your home folder."
     risk: safe
   pwd:
     summary: "Shows the full path of the folder you are in."
     risk: safe
   cat:
     summary: "Prints the contents of {args} on the screen."
+    summary_no_args: "Waits for you to type text and repeats it back (Ctrl+D to finish, Ctrl+C to stop)."
     risk: safe
   less:
     summary: "Opens {args} for reading, one screen at a time (press q to quit)."
@@ -145,3 +153,289 @@ programs:
   pip:
     summary: "Installs or manages Python packages: {args}."
     risk: caution
+    subcommands:
+      install:
+        summary: "Downloads and installs the Python package {args}."
+        risk: caution
+      uninstall:
+        summary: "Removes the Python package {args}."
+        risk: caution
+      list:
+        summary: "Lists the Python packages that are installed."
+        risk: safe
+  pip3:
+    summary: "Installs or manages Python packages: {args}."
+    risk: caution
+    subcommands:
+      install:
+        summary: "Downloads and installs the Python package {args}."
+        risk: caution
+      uninstall:
+        summary: "Removes the Python package {args}."
+        risk: caution
+      list:
+        summary: "Lists the Python packages that are installed."
+        risk: safe
+
+  # ---- getting help and finding things
+  help:
+    summary: "Shows help for the shell command {args} (in zsh, use `man` or `run-help` instead)."
+    risk: safe
+  which:
+    summary: "Shows where the program {args} is installed."
+    risk: safe
+  type:
+    summary: "Tells you what {args} is: a program, a shell command or an alias."
+    risk: safe
+  whatis:
+    summary: "Shows a one-line description of {args}."
+    risk: safe
+  apropos:
+    summary: "Searches the manual pages for commands about {args}."
+    risk: safe
+  tldr:
+    summary: "Shows short, practical examples for {args}."
+    risk: safe
+  info:
+    summary: "Opens the longer manual for {args} (press q to quit)."
+    risk: safe
+  history:
+    summary: "Lists the commands you typed before."
+    risk: safe
+
+  # ---- information about the computer
+  whoami:
+    summary: "Shows the name of the user you are logged in as."
+    risk: safe
+  date:
+    summary: "Shows the current date and time."
+    risk: safe
+  cal:
+    summary: "Shows a calendar for this month."
+    risk: safe
+  uname:
+    summary: "Shows which operating system this computer runs."
+    risk: safe
+    flags:
+      -a: "shows all details, including the version"
+  df:
+    summary: "Shows how much space is used and free on each disk."
+    risk: safe
+    flags:
+      -h: "shows sizes like 4.2G instead of raw blocks"
+  du:
+    summary: "Shows how much disk space {args} takes up."
+    summary_no_args: "Shows how much disk space each folder in here takes up."
+    risk: safe
+    flags:
+      -h: "shows sizes like 4.2M instead of raw blocks"
+      -s: "shows one total instead of every subfolder"
+  ps:
+    summary: "Lists the programs that are running."
+    risk: safe
+  top:
+    summary: "Shows running programs and how much CPU and memory they use, updating live (press q to quit)."
+    risk: safe
+  ping:
+    summary: "Checks whether {args} can be reached over the network (Ctrl+C to stop)."
+    risk: safe
+  env:
+    summary: "Lists your environment variables (settings programs can read)."
+    risk: safe
+
+  # ---- reading and comparing text
+  wc:
+    summary: "Counts the lines, words and characters in {args}."
+    risk: safe
+    flags:
+      -l: "counts lines only"
+      -w: "counts words only"
+  sort:
+    summary: "Prints the lines of {args} in sorted order. The file itself is not changed."
+    risk: safe
+    flags:
+      -r: "sorts in reverse order"
+      -n: "sorts numbers by value (so 10 comes after 9)"
+  diff:
+    summary: "Shows the lines that differ between {args}."
+    risk: safe
+
+  # ---- editors and tools
+  nano:
+    summary: "Opens {args} in the nano text editor (Ctrl+O saves, Ctrl+X quits)."
+    summary_no_args: "Opens the nano text editor (Ctrl+O saves, Ctrl+X quits)."
+    risk: safe
+  vim:
+    summary: "Opens {args} in the vim editor (type :q and Enter to quit, :wq to save and quit)."
+    summary_no_args: "Opens the vim editor (type :q and Enter to quit)."
+    risk: safe
+  code:
+    summary: "Opens {args} in Visual Studio Code."
+    risk: safe
+  python3:
+    summary: "Runs the Python file {args}."
+    summary_no_args: "Opens the interactive Python prompt (type exit() to leave)."
+    risk: safe
+    flags:
+      -m: "runs a module by name instead of a file"
+      -c: "runs the code given on the command line"
+  python:
+    summary: "Runs the Python file {args}."
+    summary_no_args: "Opens the interactive Python prompt (type exit() to leave)."
+    risk: safe
+  node:
+    summary: "Runs the JavaScript file {args}."
+    summary_no_args: "Opens the interactive JavaScript prompt (type .exit to leave)."
+    risk: safe
+  npm:
+    summary: "Manages JavaScript packages: {args}."
+    risk: caution
+    subcommands:
+      install:
+        summary: "Downloads and installs the package {args} for this project."
+        summary_no_args: "Downloads and installs the packages this project needs."
+        risk: caution
+      run:
+        summary: "Runs the project script named {args}."
+        risk: caution
+      start:
+        summary: "Starts the project."
+        risk: safe
+      test:
+        summary: "Runs the project's tests."
+        risk: safe
+  brew:
+    summary: "Homebrew, the Mac package manager: {args}."
+    risk: caution
+    subcommands:
+      install:
+        summary: "Downloads and installs {args}."
+        risk: caution
+      uninstall:
+        summary: "Removes the installed program {args}."
+        risk: caution
+      update:
+        summary: "Downloads the latest list of available programs. Nothing is upgraded yet."
+        risk: safe
+      upgrade:
+        summary: "Upgrades installed programs to their newest versions."
+        risk: caution
+      list:
+        summary: "Lists the programs Homebrew has installed."
+        risk: safe
+      search:
+        summary: "Searches for programs named like {args}."
+        risk: safe
+      info:
+        summary: "Shows details about {args}."
+        risk: safe
+  git:
+    summary: "Runs the git command {args} (git tracks changes to your files)."
+    summary_no_args: "Shows a list of git's commands."
+    risk: safe
+    flags:
+      -m: "the message that describes this commit"
+      -f: "forces the action, even if it would lose work"
+      --force: "forces the action, even if it would lose work"
+      --hard: "throws away all uncommitted changes to your files"
+      -b: "creates a new branch with that name"
+      -a: "includes every changed file / shows every branch"
+    subcommands:
+      status:
+        summary: "Shows which files changed and which are ready to commit."
+        risk: safe
+      add:
+        summary: "Marks {args} to be included in the next commit."
+        risk: safe
+      commit:
+        summary: "Saves a snapshot of the marked changes in the project's history."
+        risk: safe
+      push:
+        summary: "Uploads your commits to the shared copy online (for example GitHub)."
+        risk: safe
+      pull:
+        summary: "Downloads new commits from the shared copy and merges them into yours."
+        risk: safe
+      clone:
+        summary: "Downloads a copy of the project {args}."
+        risk: safe
+      init:
+        summary: "Starts tracking this folder with git."
+        risk: safe
+      log:
+        summary: "Lists past commits, newest first (press q to quit)."
+        risk: safe
+      diff:
+        summary: "Shows the exact lines you changed since the last commit."
+        risk: safe
+      branch:
+        summary: "Lists branches, or creates the branch {args}."
+        risk: safe
+      checkout:
+        summary: "Switches to {args}. Uncommitted changes to a file you name here are thrown away."
+        risk: caution
+      switch:
+        summary: "Switches to the branch {args}."
+        risk: safe
+      restore:
+        summary: "Throws away your uncommitted changes to {args}."
+        risk: caution
+        reversible: false
+      reset:
+        summary: "Moves the branch back to an earlier commit. With --hard, uncommitted changes are lost."
+        risk: caution
+      clean:
+        summary: "Deletes files git isn't tracking. They don't go to the Trash."
+        risk: danger
+        reversible: false
+      stash:
+        summary: "Puts your uncommitted changes aside so you can get them back later with `git stash pop`."
+        risk: safe
+      merge:
+        summary: "Combines the branch {args} into the one you're on."
+        risk: safe
+
+  # ---- shell settings
+  export:
+    summary: "Sets the setting (environment variable) {args} for this terminal and the programs it starts."
+    risk: safe
+  alias:
+    summary: "Creates a shortcut name for a command, or lists your shortcuts: {args}."
+    summary_no_args: "Lists your command shortcuts (aliases)."
+    risk: safe
+  source:
+    summary: "Runs the commands in {args} inside this terminal."
+    risk: caution
+  exit:
+    summary: "Closes this terminal session."
+    risk: safe
+
+  # ---- connecting to other computers
+  ssh:
+    summary: "Logs in to the computer {args} over the network."
+    risk: safe
+  scp:
+    summary: "Copies files to or from another computer: {args}. Existing files are overwritten."
+    risk: caution
+
+  # ---- stopping programs and the computer
+  killall:
+    summary: "Stops every running program named {args}. Unsaved work in them is lost."
+    risk: caution
+  shutdown:
+    summary: "Turns off or restarts the computer. Unsaved work in open programs is lost."
+    risk: danger
+  reboot:
+    summary: "Restarts the computer straight away. Unsaved work in open programs is lost."
+    risk: danger
+  ln:
+    summary: "Creates a link (shortcut) to {args}."
+    risk: safe
+    flags:
+      -s: "makes a symbolic link, which points to the path by name"
+      -f: "replaces an existing file at the link's location"
+  zip:
+    summary: "Packs {args} into a .zip archive."
+    risk: safe
+    flags:
+      -r: "includes folders and everything inside them"

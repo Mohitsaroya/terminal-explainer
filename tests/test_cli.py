@@ -183,3 +183,19 @@ def test_command_v_is_only_a_lookup(monkeypatch):
     shown = capture(monkeypatch)
     cli.explain_mode("command -v rm")
     assert shown["risk"] == "safe"
+
+
+def test_help_request_runs_without_asking(tmp_path, monkeypatch):
+    summary_file = tmp_path / "safe-summary"
+    monkeypatch.setenv("EXPLAIN_SAFE_SUMMARY_FILE", str(summary_file))
+    for line in ("rm --help", "sudo --help", "cp --help | less"):
+        shown = capture(monkeypatch)
+        assert cli.explain_mode(line) == cli.CANCEL      # the stub always answers "cancelled"
+        assert shown["risk"] == "safe", line
+        assert "rule_messages" not in shown, line
+
+
+def test_help_request_from_the_hook_exits_zero():
+    result = run("explain", "--", "rm --help")
+    assert result.returncode == 0
+    assert "DANGER" not in result.stderr

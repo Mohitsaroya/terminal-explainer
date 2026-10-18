@@ -201,11 +201,14 @@ def _resolve_into(ctx: Context, cmds, cur: str, budget: float) -> None:
             continue
 
         paths = []
+        names_only = False                  # after `--`, words starting with - are names too
         for a in args:
             if prog == "dd":
                 if a.startswith("of="):
                     paths.append(a[3:])
-            elif a != "--" and not a.startswith("-"):
+            elif a == "--" and not names_only:
+                names_only = True
+            elif names_only or not a.startswith("-"):
                 paths.append(a)
 
         for i, pat in enumerate(paths):

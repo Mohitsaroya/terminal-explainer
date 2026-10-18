@@ -145,3 +145,66 @@ def test_cd_inside_a_line_moves_later_substitutions(tmp_path):
     (tmp_path / "a.txt").write_text("hello")
     ctx = context.resolve(explainer.quick_parse(f"cd {tmp_path} && echo $(rm a.txt)"), cwd="/")
     assert ctx.total_files == 1
+
+
+# ---------------------------------------------------------------- help requests
+def test_help_and_version_requests_are_safe():
+    for line in ("rm --help", "rm -h", "dd --help", "sudo --help", "python3 -h", "git push --help"):
+        out = explainer.explain(line)
+        assert out["risk"] == "safe", line
+        assert out["summary"].startswith("Shows the help for"), line
+        assert out["reversible"] is True, line
+    assert explainer.explain("curl --version")["summary"] == (
+        "Shows which version of curl is installed. Nothing is changed.")
+
+
+def test_help_explains_what_the_program_does():
+    steps = explainer.explain("rm --help")["steps"]
+    assert steps[0].startswith("What rm does: Permanently deletes")
+    assert steps[-1] == "For the full manual, type: man rm (press q to quit)"
+    assert explainer.explain("git push --help")["steps"][0].startswith("What git push does: Uploads")
+
+
+def test_bare_option_is_explained():
+    assert explainer.explain("--help")["summary"].startswith("--help is an option, not a command")
+
+
+def test_help_mixed_with_real_work_is_not_a_help_request():
+    assert explainer.help_request("rm", ["-rf", "~", "--help"]) is None
+    assert explainer.help_request("rm", ["--", "--help"]) is None      # deletes a file named --help
+    assert explainer.explain("rm -- --help")["summary"].startswith("Permanently deletes --help")
+
+
+def test_lone_h_is_a_real_flag_for_some_programs():
+    assert explainer.help_request("df", ["-h"]) is None
+    assert explainer.help_request("shutdown", ["-h"]) is None
+    assert explainer.help_request("rm", ["-h"]) == "help"
+
+
+# ---------------------------------------------------------------- glossary
+def test_every_glossary_entry_is_usable():
+    entries = []
+    for name, entry in explainer.glossary().items():
+        entries.append((name, entry))
+        entries += [(f"{name} {sub}", e) for sub, e in (entry.get("subcommands") or {}).items()]
+    for name, entry in entries:
+        assert entry.get("summary"), name
+        assert entry.get("risk", "safe") in explainer.RISK_ORDER, name
+        for key in ("summary", "summary_no_args"):
+            if key in entry:
+                entry[key].format(args="x", where="in x")   # a typo like {arg} raises here
+
+
+def test_new_glossary_entries():
+    assert explainer.explain("cd")["summary"] == "Moves you to your home folder."
+    assert explainer.explain("git status")["summary"].startswith("Shows which files changed")
+    assert explainer.explain("git clean -fd")["risk"] == "danger"
+    assert explainer.explain("python3")["summary"].startswith("Opens the interactive Python prompt")
+    assert explainer.explain("python3 app.py")["summary"] == "Runs the Python file app.py."
+    assert explainer.explain("shutdown -h now")["risk"] == "danger"
+
+
+def test_files_after_double_dash_are_measured(tmp_path):
+    (tmp_path / "-x").write_text("hello")
+    ctx = context.resolve(explainer.quick_parse("rm -- -x"), cwd=str(tmp_path))
+    assert ctx.total_files == 1
