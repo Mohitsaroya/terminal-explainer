@@ -7,6 +7,17 @@ typeset -g ERR_FILE="$(mktemp)" #temp file that collects the error output
 typeset -g CAPTURING=0		# 1 while error output is being copied, 0 otherwise
 #cli.py next to this hook, wherever the repo was cloned (%x is this file, :A:h:h is explain-term/)
 typeset -g EXPLAIN_CLI="${${(%):-%x}:A:h:h}/explain/cli.py"
+#the repo's virtual environment (made by `uv sync`), which has rich and pyyaml installed
+typeset -g EXPLAIN_VENV_PY="${${(%):-%x}:A:h:h:h}/.venv/bin/python"
+
+#Python to run cli.py with: the repo's .venv if it exists, otherwise the system python3
+explain_py(){
+	if [[ -x $EXPLAIN_VENV_PY ]]; then
+		"$EXPLAIN_VENV_PY" "$@"
+	else
+		python3 "$@"
+	fi
+}
 
 #Controls if safe mode is on or off
 safeon() { SAFE_ON=1; print "Explain-term is ON"; }
@@ -23,7 +34,7 @@ my_enter(){
 
 	zle -I
 	#Pass to cli.py
-	python3 "$EXPLAIN_CLI" explain -- "$BUFFER" </dev/tty >/dev/tty 2>&1
+	explain_py "$EXPLAIN_CLI" explain -- "$BUFFER" </dev/tty >/dev/tty 2>&1
 	# 1 = user said no, 3 = user wants to edit the command, anything else runs it.
 	# If Python crashes, run the command anyway so a bug never locks the user out.
 	case $? in
@@ -62,7 +73,7 @@ pre_cmd(){
 	fi
 	#Explain the failures, skips success (0), ctrl+c (130) and ctrl+z (148)
 	if [[ -n $LAST_CMD ]] && (( code != 0 && code != 130 && code != 148 )); then
-		python3 "$EXPLAIN_CLI" error --code "$code" --errfile "$ERR_FILE" -- "$LAST_CMD" </dev/tty
+		explain_py "$EXPLAIN_CLI" error --code "$code" --errfile "$ERR_FILE" -- "$LAST_CMD" </dev/tty
 	fi
 	LAST_CMD="" #Set it back to empty
 }
