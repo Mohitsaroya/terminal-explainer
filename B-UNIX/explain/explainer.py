@@ -14,27 +14,39 @@ always true for the folder you are in.
 Returns a dict with: summary, steps, side_effects, reversible, risk, explainer, explain_ms.
 Never raises: a broken glossary or a strange command still gives a usable answer.
 
-Try it (from explain-term/):  uv run python -m explain.explainer "rm -rf ./*"
+Try it (from the B-UNIX/ folder):  uv run python -m explain.explainer "rm -rf ./*"
 """
 from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import time
 from pathlib import Path
 
 import yaml
 
-from .context import human_bytes, strip_sudo
+from .context import human_bytes, strip_wrappers, unwrap_once
 
 HERE = Path(__file__).parent
 RISK_ORDER = {"safe": 0, "caution": 1, "danger": 2}
 NO_UNDO = {"rm", "shred", "dd", "truncate", "unlink"}      # rm on macOS skips the Trash
 MAX_LEN, MAX_STEPS, MAX_EFFECTS = 160, 6, 5
-SEPARATORS = {"&&", "||", ";", "|", "&"}
+# Characters that end one command and start the next: && || ; | & |& and newlines.
+# ( and ) are here too, so `(cd /tmp && rm -rf *)` is read as cd, then rm.
+SEPARATOR_CHARS = set(";&|()\n")
 # shlex splits "2>&1" into "2", ">&", "1", so the fd number is dropped in quick_parse.
 REDIRECTS = {">", ">>", "<", "&>", "&>>", ">&", "<&", ">|", "<<", "<<<"}
+# Redirect targets that are not real files, so nothing is "replaced".
+NOT_FILES = {"/dev/null", "/dev/stdout", "/dev/stderr", "/dev/tty"}
+# Shell words that are syntax, not programs: in `for f in *; do rm $f; done` the program is rm.
+SHELL_KEYWORDS = {"do", "then", "else", "elif", "if", "while", "until", "!", "{", "}",
+                  "done", "fi", "esac", "time"}
+# Loop and case headers (`for f in *`) don't run anything themselves, so they are dropped.
+SKIP_HEADERS = {"for", "select", "case", "function"}
+# `FOO=1 rm x` sets FOO for rm; the program is still rm.
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 
 
 # ---------------------------------------------------------------- public API
@@ -51,7 +63,7 @@ def explain(line: str, cmds=None, ctx=None) -> dict:
         cmds = list(cmds) if cmds else quick_parse(line)
     except ValueError:                       # e.g. an unclosed quote
         cmds = []
-    progs = [strip_sudo(_prog(c), _args(c))[0] for c in cmds]
+    progs = [strip_wrappers(_prog(c), _args(c))[0] for c in cmds]
 
     try:
         out, source = _from_cache(line), "cache"
@@ -135,10 +147,16 @@ def _describe(prog: str, args: list):
     """-> (summary, [flag meanings], risk, can_undo) for one simple command."""
     if not prog:
         return None, [], "safe", True
-    inner_prog, inner_args = strip_sudo(prog, args)
-    if inner_prog != prog:                            # explain the command sudo runs
+    # sudo, env, xargs, time, ... run another command: explain that one instead.
+    # One layer at a time, so `env sudo rm x` still says "As administrator".
+    inner_prog, inner_args = unwrap_once(prog, args)
+    if (inner_prog, inner_args) != (prog, args):
         inner, flags, risk, undo = _describe(inner_prog, inner_args)
-        return f"As administrator: {inner[0].lower()}{inner[1:]}", flags, merge_risk("danger", risk), undo
+        if prog == "sudo" and not inner.startswith("As administrator"):
+            inner = f"As administrator: {inner[0].lower()}{inner[1:]}"
+        if prog == "sudo":
+            return inner, flags, merge_risk("danger", risk), undo
+        return inner, flags, risk, undo
 
     entry = glossary().get(prog) or {}
     words = [a for a in args if not a.startswith("-")]
@@ -210,12 +228,15 @@ def _impact_lines(progs: list, ctx) -> list:
 def _redirect_lines(line: str) -> list:
     """`echo hi > notes.txt` replaces notes.txt; beginners rarely expect that."""
     try:
-        toks = list(_lexer(line))
+        line, subs = _pull_substitutions(line)
+        toks = [_restore(t, subs)[0] for t in _lexer(line)]
     except ValueError:
         return []
     out = []
     for i, t in enumerate(toks[:-1]):
         target = toks[i + 1]
+        if target in NOT_FILES or target.isdigit():   # 2>/dev/null, >&2: no file is touched
+            continue
         if t in (">", "&>", ">|"):
             out.append(f"{target} is replaced: anything already in it is lost")
         elif t in (">>", "&>>"):
@@ -246,31 +267,161 @@ def _prog(cmd) -> str:
 
 
 def _lexer(line: str):
-    lex = shlex.shlex(line, posix=True, punctuation_chars=";&|<>")
+    """Shell-like word splitter. Raises ValueError on an unclosed quote."""
+    lex = shlex.shlex(line, posix=True, punctuation_chars=";&|<>()\n")
     lex.whitespace_split = True
+    lex.whitespace = " \t\r"      # newlines separate commands, so they are punctuation, not spaces
+    lex.commenters = ""            # zsh treats # as text by default (`rm a#b` deletes "a#b")
     return lex
 
 
+def _is_separator(tok: str) -> bool:
+    """True for &&, ||, ;, |, &, |&, newlines, ( and ), and runs of them like ";\n"."""
+    return bool(tok) and all(ch in SEPARATOR_CHARS for ch in tok)
+
+
+# Placeholders for command substitutions while the outer line is split.
+# \x00 can't be typed at a prompt, so it can never clash with a real word.
+_MARK = "\x00{}\x00"
+_MARK_RE = re.compile("\x00(\\d+)\x00")
+
+
+def _closing(line: str, i: int, close: str) -> int:
+    """Index of the `close` character that ends a substitution opened just before i.
+
+    Skips quoted text and nested ( ). Returns len(line) if it is never closed.
+    """
+    depth, quote = 0, None
+    while i < len(line):
+        ch = line[i]
+        if quote:
+            if ch == "\\" and quote == '"':
+                i += 1
+            elif ch == quote:
+                quote = None
+        elif ch == "\\":
+            i += 1
+        elif ch in "'\"":
+            quote = ch
+        elif (close, ch) in ((")", "("), ("}", "{")):
+            depth += 1
+        elif ch == close:
+            if depth == 0:
+                return i
+            depth -= 1
+        i += 1
+    return len(line)
+
+
+def _pull_substitutions(line: str):
+    """Swap $(...), `...`, <(...) and >(...) for placeholders.
+
+    These run a command of their own, even inside double quotes:
+    `ls "$(rm -rf ~)"` deletes your home folder. Text in single quotes and
+    escaped \\$( are left alone, because the shell doesn't run them either.
+    Returns (line with placeholders, [(shown text, inner command line or None)]).
+    """
+    out, subs, i, quote = [], [], 0, None
+    while i < len(line):
+        ch = line[i]
+        if ch == "\\" and quote != "'":            # \$( is literal text
+            out.append(line[i:i + 2])
+            i += 2
+            continue
+        if ch == "'" and quote != '"':
+            quote = None if quote == "'" else "'"
+        elif ch == '"' and quote != "'":
+            quote = None if quote == '"' else '"'
+        elif quote != "'":
+            opener = None
+            brace_end = _closing(line, i + 2, "}") if line.startswith("${", i) else -1
+            if brace_end >= 0 and not any(m in line[i:brace_end] for m in ("$(", "`")):
+                # ${HOME} or zsh's ${(U)name}: one word, and nothing runs. If it holds a
+                # $(...) we fall through so that substitution is still found.
+                opener, close, shown, runs = "${", "}", line[i:brace_end + 1], False
+            elif line.startswith("$((", i):
+                opener, close, shown, runs = "$((", ")", "$((...))", False   # arithmetic, not a command
+            elif line.startswith("$(", i):
+                opener, close, shown, runs = "$(", ")", "$(...)", True
+            elif ch == "`":
+                opener, close, shown, runs = "`", "`", "`...`", True
+            elif line.startswith(("<(", ">("), i) and quote is None:
+                opener, close, shown, runs = line[i:i + 2], ")", line[i] + "(...)", True
+            if opener:
+                start = i + len(opener)
+                end = _closing(line, start, close)
+                if opener == "$((":                  # skip the second ) of $(( ... ))
+                    end = _closing(line, end + 1, ")") if end < len(line) else end
+                subs.append((shown, line[start:end] if runs else None))
+                mark = _MARK.format(len(subs) - 1)
+                # outside quotes, quote the placeholder so ( and ) in it stay one word
+                out.append(mark if quote else f"'{mark}'")
+                i = end + 1
+                continue
+        out.append(ch)
+        i += 1
+    return "".join(out), subs
+
+
+def _restore(tok: str, subs: list):
+    """Put the shown text back into a word; return (word, commands run by its substitutions)."""
+    found = []
+
+    def put_back(m):
+        shown, inner = subs[int(m.group(1))]
+        if inner:
+            for cmd in quick_parse(inner):
+                cmd["in_substitution"] = True
+                found.append(cmd)
+        return shown
+
+    return _MARK_RE.sub(put_back, tok), found
+
+
+def _simple_command(words: list):
+    """{"program", "args"} for one simple command, or None if nothing runs."""
+    while words and (words[0] in SHELL_KEYWORDS or ASSIGNMENT.match(words[0])):
+        words = words[1:]
+    if not words or words[0] in SKIP_HEADERS:
+        return None
+    return {"program": words[0], "args": words[1:]}
+
+
 def quick_parse(line: str) -> list:
-    """Small stand-in for parser.py: splits on && || ; | and drops redirections.
-    The real pipeline can pass parser.parse() output instead."""
-    out, current, skip = [], [], False
+    """Split a command line into simple commands: [{"program": "rm", "args": ["-rf", "x"]}, ...].
+
+    Splits on && || ; | & |& ( ) and newlines, drops redirections and their file
+    names, skips shell keywords (do, then, ...) and VAR=value prefixes, and also
+    returns the commands inside $(...) and `...`. Those are marked
+    "in_substitution": True and come just before the command that contains them,
+    because the shell runs them first. Raises ValueError on an unclosed quote.
+    """
+    line, subs = _pull_substitutions(line.replace("\\\n", ""))   # backslash-newline joins lines
+    out, current, inner, skip = [], [], [], False
+
+    def finish():
+        out.extend(inner)
+        cmd = _simple_command(current)
+        if cmd:
+            out.append(cmd)
+        current.clear()
+        inner.clear()
+
     for tok in _lexer(line):
+        tok, found = _restore(tok, subs)
+        inner.extend(found)                        # even `> $(rm x)` runs rm
         if skip:
             skip = False
             continue
-        if tok in SEPARATORS:
-            if current:
-                out.append({"program": current[0], "args": current[1:]})
-            current = []
+        if _is_separator(tok):
+            finish()
         elif tok in REDIRECTS:
             if len(current) > 1 and current[-1].isdigit():
                 current.pop()                          # the 2 in 2>errors.txt
             skip = True                                # the next word is the file name
         else:
             current.append(tok)
-    if current:
-        out.append({"program": current[0], "args": current[1:]})
+    finish()
     return out
 
 

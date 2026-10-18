@@ -80,10 +80,14 @@ command while testing.
 | Danger | Requires the displayed confirmation word and Enter; Esc cancels; type `e` to return to the shell prompt and edit. |
 
 Known destructive commands and configured rules can raise risk. The CLI combines
-the highest risk found across parsed commands. An `echo` command containing a
-command substitution that runs a file-removal command is classified as DANGER,
-including when `bashlex` is unavailable. This targeted check is not a complete
-Zsh parser; other unsupported shell syntax may not be fully understood.
+the highest risk found across parsed commands. Every line of a pasted
+multi-line command is checked, and so are commands hidden inside `$(...)`,
+backticks, `<(...)`, subshells, loops and wrappers such as `sudo`, `env` and
+`xargs`. A command substitution that runs a file-removal command (for example
+`echo $(rm -rf *)`) is always classified as DANGER. A line with an unclosed
+quote is shown as a WARNING, because B-UNIX can't tell what it would run. This
+is not a complete Zsh parser; other unsupported shell syntax may not be fully
+understood.
 
 Unknown commands are not automatically classified as risky just because they are
 unknown. The project is an early prototype, and explanations/rules do not cover

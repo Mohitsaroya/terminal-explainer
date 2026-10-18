@@ -1,3 +1,11 @@
+"""The coloured explanation panel and the confirmation prompt.
+
+    render.show(rec) -> "ran" | "cancelled" | "edited"
+
+`rec` is the dict from explainer.explain() plus "command", "confirm_word" and,
+from cli.py, optional "rule_messages" and "segments". Everything is drawn on
+stderr so it never mixes with the command's own output.
+"""
 from __future__ import annotations
 
 # imports
@@ -11,27 +19,24 @@ import time
 # importing rich 
 
 from rich.console import Console, Group
-from rich.live import Live 
 from rich.panel import Panel 
 from rich.table import Table
 from rich.text import Text
 
 
 
+# risk level -> (panel colour, label shown in the header)
 styles = { 
     "safe": ("green", "SAFE"),
     "caution": ("yellow", "WARNING"),
     "danger": ("red",   "DANGER")
-}
-hints = {
-    "caution": "Run: type yes + Enter | Cancel: Esc | Edit: type e + Enter",
-    "danger": "Run: type the word + Enter | Cancel: Esc | Edit: type e + Enter"
 }
 
 MAX_EXPLANATION_WIDTH = 96
 
 
 def _explanation_width() -> int:
+    """The terminal's width, but never wider than MAX_EXPLANATION_WIDTH."""
     try:
         terminal_width = os.get_terminal_size(sys.stderr.fileno()).columns
     except OSError:
@@ -70,7 +75,7 @@ def build_panel(rec: dict):
         3. Effects
         4. Colour labeling
     parameter: Uses a dictionary for the panel
-    return:
+    return: a rich Panel, ready for console.print()
     """
     if rec.get("risk") in styles:
         risk = rec.get("risk")
@@ -124,21 +129,29 @@ def build_panel(rec: dict):
     elif reversible is True:
         body.append(Text("! Reversible", style="green"))
 
-    hint = hints.get(risk)
-    word = _confirmation_word(rec)
+    # the bottom line says which keys to press; safe commands never ask, so no hint
+    hint = None
     if risk in ("caution", "danger"):
+        word = _confirmation_word(rec)
         hint = f"Run: type {word} + Enter | Cancel: Esc | Edit: type e + Enter"
     return Panel(Group(*body), title="EXPLANATION", title_align="center", border_style=color, subtitle=hint, subtitle_align="center", padding=(1,2))
 
 # -- Confirmation
 
 def _read_confirmation_input(con: Console, prompt: Text):
+    """Read one line from the keyboard, a key at a time.
+
+    Returns the typed text when Enter is pressed, or None for Esc, Ctrl+C,
+    Ctrl+D or when there is no keyboard (stdin is not a terminal).
+    Reading key by key is what lets a single Esc cancel straight away.
+    """
     con.print(prompt, end="")
     if not sys.stdin.isatty():
         return None
 
     answer = bytearray()
     if os.name == "nt":
+        # Windows has no termios; msvcrt reads one key at a time instead
         import msvcrt
 
         while True:
@@ -162,6 +175,7 @@ def _read_confirmation_input(con: Console, prompt: Text):
             con.file.write(char)
             con.file.flush()
 
+    # macOS / Linux: cbreak mode hands us each key as it is pressed
     import termios
     import tty
 
@@ -193,6 +207,8 @@ def _read_confirmation_input(con: Console, prompt: Text):
 
 
 def _erase_last_character(answer: bytearray) -> bool:
+    """Backspace: drop the last character, including every byte of a UTF-8 one
+    like "é". Returns False if there was nothing to erase."""
     if not answer:
         return False
     char = answer.pop()
@@ -205,12 +221,14 @@ def _erase_last_character(answer: bytearray) -> bool:
 
 
 def _confirmation_word(rec: dict) -> str:
+    """What the user must type: the folder name for danger (if known), else "yes"."""
     if rec.get("risk") == "danger":
         return _clean(rec.get("confirm_word") or "yes")
     return "yes"
 
 
 def confirm(rec: dict, con: Console = None):
+    """Ask for the confirmation word. Returns "ran", "cancelled" or "edited"."""
     con = con or console
     risk = rec.get("risk")
     if risk == "safe":
