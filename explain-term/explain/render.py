@@ -75,7 +75,10 @@ def build_panel(rec: dict):
     body += [head, Text("")]
 
     summary = rec.get("summary")
-    body.append(Text(_clean(summary), style="bold") if summary else Text("Explaining..", style="dim italic))"))
+    body.append(Text(_clean(summary), style="bold") if summary else Text("Explaining..", style="dim italic"))
+
+    for msg in rec.get("rule_messages") or []:
+        body.append(Text.assemble(("! ", "bold yellow"), _clean(msg)))
 
     segsm = rec.get("segments") or []
 
@@ -83,14 +86,14 @@ def build_panel(rec: dict):
         grid = Table.grid(padding=(0,1))
         for seg in segsm:
             c, lab = styles.get(seg.get("risk"), styles["caution"])
-            grid.add_row(Text("- ", style=c), Text(lab, style=f"bold {c}")),
-            Text(_clean(seg.get("command","")))
-        body += [Text(""), Text("Step by step", style="dim")]
+            grid.add_row(Text("- ", style=c), Text(lab, style=f"bold {c}"),
+                         Text(_clean(seg.get("command",""))))
+        body += [Text(""), grid]
 
 # displays the step by step of what the command does
     steps = rec.get("steps") or []
     if steps:
-        body.append(Text(""))
+        body += [Text(""), Text("Step by step", style="dim")]
         for i, s in enumerate(steps, 1):
             body.append(Text.assemble((f"{i}. ", "dim"), _clean(s)))
 
@@ -126,6 +129,8 @@ def read_key():
     import tty # terminal functions 
 
 
+    if not sys.stdin.isatty():    # no keyboard to read from (piped input, tests)
+        raise EOFError
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     try:
@@ -163,11 +168,11 @@ def confirm(rec: dict, con: Console = None):
             key = read_key()
         except (KeyboardInterrupt, EOFError):
             return "cancelled"
-        if key in ("\r", "\n", "y"):
+        if key in ("\r", "\n", "y", "Y"):
             return "ran"
-        if key in ("\x1b", "\x03", "n", "q", ""):
+        if key in ("\x1b", "\x03", "n", "N", "q", ""):
             return "cancelled"
-        if key == "e":
+        if key in ("e", "E"):
             return "edited"
         # any other key: ignore and keep waiting
  

@@ -13,3 +13,7 @@ dependencies = [
 dev = [
     "pytest>=9.1.1",
 ]
+
+[tool.pytest.ini_options]
+# the `explain` package lives in explain-term/; parser.py and rules/ are at the repo root
+pythonpath = ["explain-term", "."]
