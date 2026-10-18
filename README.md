@@ -1,163 +1,139 @@
 # B-UNIX
 
-**A safety net for beginners in the terminal.** Every time you press Enter, explain-term tells you in plain English what the command is about to do. Risky commands need an extra confirmation, and when a command fails it explains why.
+A safety net for beginners in the terminal. In Zsh, B-UNIX explains commands before
+they run, asks for confirmation for commands classified as risky, and can explain
+errors after a command fails.
 
-```
-╭──────────────────────────────── EXPLANATION ─────────────────────────────────╮
-│   DANGER  $ rm -rf project/                                                  │
-│                                                                              │
-│  Permanently deletes project/. Deleted files do not go to the Trash.         │
-│                                                                              │
-│  Step by step                                                                │
-│  1. -r: also deletes folders and everything inside them                      │
-│  2. -f: never asks for confirmation and ignores files that don't exist       │
-│                                                                              │
-│  - 2 files and 1 folder (0 B) permanently deleted                            │
-│  X cannot be undo'd, action is not reversible                                │
-╰──────────────────── Type project to run | Enter = cancel ────────────────────╯
-```
+## Requirements
 
----
+- macOS or Linux. On Windows, use WSL.
+- Zsh.
+- Python 3.12 or newer.
+- `uv` (recommended) or `pip`.
 
-## What you need
+## Install
 
-| Tool | Version | Check with | Notes |
-|---|---|---|---|
-| **macOS or Linux** | any | | On Windows, use [WSL](https://learn.microsoft.com/windows/wsl/install) |
-| **zsh** | any | `zsh --version` | Default shell on macOS. On Ubuntu/Debian: `sudo apt install zsh` |
-| **git** | any | `git --version` | |
-| **Python** | **3.12 or newer** | `python3 --version` | Not needed if you use uv (below): uv downloads it for you |
-| **uv** *(recommended)* | any | `uv --version` | `brew install uv` or `curl -LsSf https://astral.sh/uv/install.sh \| sh` |
-
-The Python packages (`rich`, `pyyaml`, and `pytest` for the tests) are installed into a local `.venv` folder by the steps below. Nothing is installed globally.
-
----
-
-## Quick start (about 2 minutes)
-
-### 1. Clone and install
-
-**With uv (recommended)**, which installs the exact versions in `uv.lock`:
+From the repository root, install the dependencies into the project virtual
+environment:
 
 ```sh
-git clone https://github.com/Mohitsaroya/terminal-explainer.git
-cd terminal-explainer
 uv sync
 ```
 
-**Or with plain Python and pip**, if you don't want to install uv:
+Alternatively, use Python and pip:
 
 ```sh
-git clone https://github.com/Mohitsaroya/terminal-explainer.git
-cd terminal-explainer
 python3 -m venv .venv
 source .venv/bin/activate
-pip install rich pyyaml pytest
+python -m pip install bashlex pydantic pyyaml rich pytest
 ```
 
-> Either way, the packages must end up in `terminal-explainer/.venv`. The hook looks for that
-> folder automatically, so you don't need to activate it again later. Don't skip the venv and
-> `pip install` globally: Homebrew's Python refuses that with an `externally-managed-environment` error.
+The Zsh hook uses the active environment's Python if one is activated; otherwise it
+tries the repository's `.venv/bin/python`, then `python3`.
 
-### 2. Turn it on
+### WSL
 
-From the `terminal-explainer` folder, **in zsh** (type `zsh` first if your prompt is bash):
+Do not use a Windows-created `.venv` from WSL. Create and activate a Linux virtual
+environment (it can live outside the Windows-mounted repository):
 
 ```sh
-source explain-term/hook/explain.zsh
+python3 -m venv "$HOME/.venvs/b-unix"
+source "$HOME/.venvs/b-unix/bin/activate"
+python -m pip install bashlex pydantic pyyaml rich pytest
 ```
 
-It stays on for this terminal window only. Close the window, or type `safeoff`, to stop it.
+Activate it in each WSL terminal before sourcing the hook.
 
-### 3. Try it
+## Enable the Zsh hook
 
-Make a throwaway folder so nothing real is at risk, then type these one at a time:
+From the repository root, in a Zsh terminal:
 
-```sh
-mkdir -p /tmp/demo/project && touch /tmp/demo/project/a.txt /tmp/demo/project/b.txt
-cd /tmp/demo
+```zsh
+source B-UNIX/hook/explain.zsh
 ```
 
-| Type this | What you should see |
+The hook is active only in the current shell. Use `safeoff` to turn it off and
+`safeon` to turn it back on. (These names start with `safe`, not `save`.)
+The prompt includes the current directory's full path and updates when you
+change directories.
+
+## Try it safely
+
+Use a disposable directory for experiments:
+
+```zsh
+demo_dir=$(mktemp -d)
+cd "$demo_dir"
+touch keep.txt
+```
+
+Try `ls`, then `echo $(rm -rf *)`. The latter should display a DANGER panel and wait
+for confirmation; press Enter or Esc to cancel. Do not confirm a destructive
+command while testing.
+
+## Confirmation behavior
+
+| Risk | Behavior |
 |---|---|
-| `ls` | A green ✓ line explaining the command, then it runs normally |
-| `rm -rf project/` | A red **DANGER** panel showing exactly what would be deleted. Press **Enter** to cancel. Then run `ls`: `project` is still there |
-| `pyhton3 app.py` | zsh says "command not found", then explain-term explains exit code 127 and suggests checking the spelling |
-| `safeoff` | Turns explain-term off. `safeon` turns it back on |
+| Safe | Shows a green ✓ and its short explanation, then runs the command. No prompt. |
+| Warning | Requires typing `yes` and pressing Enter; Esc cancels; type `e` to return to the shell prompt and edit. |
+| Danger | Requires the displayed confirmation word and Enter; Esc cancels; type `e` to return to the shell prompt and edit. |
 
-### 4. Run the tests (optional)
+Known destructive commands and configured rules can raise risk. The CLI combines
+the highest risk found across parsed commands. An `echo` command containing a
+command substitution that runs a file-removal command is classified as DANGER,
+including when `bashlex` is unavailable. This targeted check is not a complete
+Zsh parser; other unsupported shell syntax may not be fully understood.
+
+Unknown commands are not automatically classified as risky just because they are
+unknown. The project is an early prototype, and explanations/rules do not cover
+every command.
+
+If the CLI encounters an unexpected internal error, the Zsh hook currently fails
+open and runs the command. Treat that behavior as a limitation; do not use the
+project as the only safety measure for important data.
+
+## Run tests
 
 ```sh
-cd path/to/terminal-explainer   # back to the repo folder
-uv run pytest           # with uv
-# or, with the pip setup and .venv active:
-pytest
+uv run pytest -q
 ```
 
-You should see `16 passed`.
+Or, with the pip environment activated:
 
----
-
-## How to answer a prompt
-
-| Level | Colour | What it means | Keys |
-|---|---|---|---|
-| Safe | green ✓ | A one-line explanation, then the command runs | none |
-| Warning | yellow | Could cause trouble | **Enter** run · **Esc** cancel · **e** edit the command |
-| Danger | red | Can't be undone | Type the word shown (for example the folder name) to run · **Enter** cancel |
-
-If explain-term itself ever hits a bug, your command still runs, so it can never lock you out of your terminal.
-
----
-
-## Troubleshooting
-
-| Problem | Fix |
-|---|---|
-| `explain-term needs zsh. Type 'zsh' first.` | You're in bash. Type `zsh`, then run the `source` line again |
-| `ModuleNotFoundError: No module named 'rich'` | The packages aren't in `terminal-explainer/.venv`. Re-run step 1 from inside the repo folder |
-| `error: externally-managed-environment` | You ran `pip install` outside a venv. Use the `python3 -m venv .venv` steps above, or uv |
-| `python3 --version` shows 3.11 or older | Use the uv route: `uv sync` downloads Python 3.12 automatically |
-| Nothing happens when I press Enter | The hook is per window. Run the `source` line again in this window, and check you didn't type `safeoff` |
-
----
+```sh
+pytest -q
+```
 
 ## How it works
 
-```
-you press Enter
-   │
-   ▼
-explain-term/hook/explain.zsh   replaces zsh's Enter key, sends the command to cli.py
-   │
-   ▼
-explain-term/explain/cli.py     explain mode: shows the panel, asks, returns run / cancel / edit
-   ├── context.py               real facts: which files match, how many, how big, git status
-   ├── explainer.py             plain-English explanation, using glossary.yaml and rules.yaml
-   └── render.py                the coloured panels and key handling (rich)
+```text
+Enter in Zsh
+  -> B-UNIX/hook/explain.zsh
+  -> B-UNIX/explain/cli.py
+  -> glossary explanation + root rules/rules.py and rules/rules.yaml
+  -> B-UNIX/explain/render.py confirmation panel
 
-command fails  →  the hook captures its error output  →  cli.py error mode explains it
+Failed command
+  -> Zsh hook captures error output
+  -> CLI explains the exit code and captured error
 ```
 
-### Project layout
+## Project layout
 
+```text
+B-UNIX/
+  hook/explain.zsh       Zsh Enter hook, mode toggles, and error capture
+  explain/cli.py         CLI entry point
+  explain/context.py     Working-directory and file context
+  explain/explainer.py   Glossary-based explanations and risk summaries
+  explain/render.py      Panels and confirmation prompts
+  explain/glossary.yaml  Program and flag descriptions
+  explain/rules.yaml     Additional rule data (not the active root checker format)
+rules/
+  rules.py               Active YAML rule checker
+  rules.yaml             Active command-risk rules
+tests/                   Pytest suite
+pyproject.toml           Python dependencies and pytest configuration
+uv.lock                  Pinned dependency versions
 ```
-explain-term/
-  hook/explain.zsh        zsh hook (Enter key, error capture, safeon / safeoff)
-  explain/cli.py          entry point: `explain` and `error` modes
-  explain/context.py      what the command will touch (files, sizes, git state)
-  explain/explainer.py    builds the explanation and danger level
-  explain/render.py       panels and y/n / type-to-confirm prompts
-  explain/rules.yaml      danger rules, editable without touching Python
-  explain/glossary.yaml   plain-English meanings of programs and flags
-parser.py, rules/         standalone command parser and rule checker (used by tests)
-tests/                    pytest suite
-pyproject.toml, uv.lock   dependencies
-```
-
-### Settings
-
-| Variable | Meaning |
-|---|---|
-| `EXPLAIN_GLOSSARY` | Use a different glossary file instead of `explain/glossary.yaml` |
-| `EXPLAIN_CACHE` | Path to a JSON file of hand-written explanations for specific commands |

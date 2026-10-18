@@ -3,16 +3,27 @@
 
 typeset -g SAFE_ON=1	# 1 is on and 0 is off
 typeset -g LAST_CMD=""	#the command that is currently running
+typeset -gx EXPLAIN_FROM_ZLE=1
 typeset -g ERR_FILE="$(mktemp)" #temp file that collects the error output
+typeset -g SAFE_SUMMARY_FILE="$(mktemp)" #safe explanation prints before command output
 typeset -g CAPTURING=0		# 1 while error output is being copied, 0 otherwise
 #cli.py next to this hook, wherever the repo was cloned (%x is this file, :A:h:h is explain-term/)
 typeset -g EXPLAIN_CLI="${${(%):-%x}:A:h:h}/explain/cli.py"
 #the repo's virtual environment (made by `uv sync`), which has rich and pyyaml installed
 typeset -g EXPLAIN_VENV_PY="${${(%):-%x}:A:h:h:h}/.venv/bin/python"
 
-#Python to run cli.py with: the repo's .venv if it exists, otherwise the system python3
+#Show the current absolute directory while preserving the existing prompt.
+if (( ! ${+EXPLAIN_PROMPT_PATH_ADDED} )); then
+	typeset -g EXPLAIN_ORIGINAL_PROMPT="$PROMPT"
+	PROMPT="%/ ${PROMPT}"
+	typeset -g EXPLAIN_PROMPT_PATH_ADDED=1
+fi
+
+#Prefer an activated environment, then the repo's .venv, then system Python.
 explain_py(){
-	if [[ -x $EXPLAIN_VENV_PY ]]; then
+	if [[ -n "$VIRTUAL_ENV" && -x "$VIRTUAL_ENV/bin/python" ]]; then
+		"$VIRTUAL_ENV/bin/python" "$@"
+	elif [[ -x $EXPLAIN_VENV_PY ]]; then
 		"$EXPLAIN_VENV_PY" "$@"
 	else
 		python3 "$@"
@@ -31,15 +42,15 @@ my_enter(){
 		zle .accept-line
 		return
 	fi
-
-	zle -I
+	: >| "$SAFE_SUMMARY_FILE"
 	#Pass to cli.py
-	explain_py "$EXPLAIN_CLI" explain -- "$BUFFER" </dev/tty >/dev/tty 2>&1
-	# 1 = user said no, 3 = user wants to edit the command, anything else runs it.
-	# If Python crashes, run the command anyway so a bug never locks the user out.
+	EXPLAIN_SAFE_SUMMARY_FILE="$SAFE_SUMMARY_FILE" \
+		explain_py "$EXPLAIN_CLI" explain -- "$BUFFER" </dev/tty >/dev/tty 2>&1
+	# 1 = user cancelled, 3 = return to the prompt for editing. If Python
+	# crashes, run the command anyway so a bug never locks the user out.
 	case $? in
 		1) BUFFER=""; zle reset-prompt ;;
-		3) zle reset-prompt ;;	#keeps the typed command so it can be changed
+		3) zle reset-prompt ;;
 		*) zle .accept-line ;;
 	esac
 }
@@ -48,6 +59,11 @@ zle -N accept-line my_enter #Replace the zsh Enter key with my_enter
 #Runs right before a command starts: remembers what it was
 pre_run(){
 	LAST_CMD="$1"
+	if [[ -s $SAFE_SUMMARY_FILE ]]; then
+		local summary="$(<$SAFE_SUMMARY_FILE)"
+		: >| "$SAFE_SUMMARY_FILE"
+		printf '\033[32m✓\033[0m %s\n' "$summary"
+	fi
 	: >| "$ERR_FILE" #Empties the error file from last time (before any early return, so old errors never leak through)
 
 	#Don't capture output from interactive programs
@@ -80,6 +96,7 @@ pre_cmd(){
 
 cleanup(){
 	rm -f "$ERR_FILE" #Deletes the session's temp file
+	rm -f "$SAFE_SUMMARY_FILE"
 }
 
 autoload -Uz add-zsh-hook

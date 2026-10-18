@@ -24,13 +24,26 @@ styles = {
     "danger": ("red",   "DANGER")
 }
 hints = {
-    "caution": "Enter = Run | Esc = cancel | e = edit",
-    "danger": "Type the word below to run | Enter = cancel"
+    "caution": "Run: type yes + Enter | Cancel: Esc | Edit: type e + Enter",
+    "danger": "Run: type the word + Enter | Cancel: Esc | Edit: type e + Enter"
 }
 
-SAFE_ONE_LINER = True # if false = print nothing
+MAX_EXPLANATION_WIDTH = 96
 
-console = Console(stderr=True)
+
+def _explanation_width() -> int:
+    try:
+        terminal_width = os.get_terminal_size(sys.stderr.fileno()).columns
+    except OSError:
+        return MAX_EXPLANATION_WIDTH
+    return min(terminal_width, MAX_EXPLANATION_WIDTH)
+
+
+def _new_console() -> Console:
+    return Console(stderr=True, width=_explanation_width())
+
+
+console = _new_console()
 
 # Safety Helpers
 # Private variables and functions 
@@ -112,36 +125,90 @@ def build_panel(rec: dict):
         body.append(Text("! Reversible", style="green"))
 
     hint = hints.get(risk)
-    if risk == "danger":
-        hint = f"Type {_clean(rec.get('confirm_word') or 'yes')} to run | Enter = cancel"
+    word = _confirmation_word(rec)
+    if risk in ("caution", "danger"):
+        hint = f"Run: type {word} + Enter | Cancel: Esc | Edit: type e + Enter"
     return Panel(Group(*body), title="EXPLANATION", title_align="center", border_style=color, subtitle=hint, subtitle_align="center", padding=(1,2))
 
 # -- Confirmation
 
-def read_key():
-    """
-    Purpose: this function is to read the key input 
-    Parameter: N/A
-    Return: returns the char 
-    """ 
-    import select
-    import termios # terminal i/o 
-    import tty # terminal functions 
+def _read_confirmation_input(con: Console, prompt: Text):
+    con.print(prompt, end="")
+    if not sys.stdin.isatty():
+        return None
 
+    answer = bytearray()
+    if os.name == "nt":
+        import msvcrt
 
-    if not sys.stdin.isatty():    # no keyboard to read from (piped input, tests)
-        raise EOFError
+        while True:
+            char = msvcrt.getwch()
+            if char == "\x1b":
+                con.print()
+                return None
+            if char in ("\r", "\n"):
+                con.print()
+                return answer.decode(errors="replace")
+            if char in ("\x03", "\x04"):
+                con.print()
+                return None
+            if char in ("\b", "\x7f"):
+                if _erase_last_character(answer):
+                    con.file.write("\b \b")
+                    con.file.flush()
+                continue
+            encoded = char.encode()
+            answer.extend(encoded)
+            con.file.write(char)
+            con.file.flush()
+
+    import termios
+    import tty
+
     fd = sys.stdin.fileno()
     old = termios.tcgetattr(fd)
     try:
-        tty.setcbreak(fd) #cbreak keeps ctrl-c working 
-        ch = os.read(fd,1).decode(errors="ignore")
-        if ch == "\x1b" and select.select([fd], [], [], 0.05)[0]:
-            os.read(fd, 8)
-            return "?"
-        return ch
+        tty.setcbreak(fd)
+        while True:
+            char = os.read(fd, 1)
+            if char == b"\x1b":
+                con.print()
+                return None
+            if char in (b"\r", b"\n"):
+                con.print()
+                return answer.decode(errors="replace")
+            if char in (b"\x03", b"\x04"):
+                con.print()
+                return None
+            if char in (b"\x08", b"\x7f"):
+                if _erase_last_character(answer):
+                    con.file.write("\b \b")
+                    con.file.flush()
+                continue
+            answer.extend(char)
+            con.file.write(char.decode(errors="replace"))
+            con.file.flush()
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _erase_last_character(answer: bytearray) -> bool:
+    if not answer:
+        return False
+    char = answer.pop()
+    if char & 0xC0 == 0x80:
+        while answer and answer[-1] & 0xC0 == 0x80:
+            answer.pop()
+        if answer and answer[-1] & 0xC0 == 0xC0:
+            answer.pop()
+    return True
+
+
+def _confirmation_word(rec: dict) -> str:
+    if rec.get("risk") == "danger":
+        return _clean(rec.get("confirm_word") or "yes")
+    return "yes"
+
 
 def confirm(rec: dict, con: Console = None):
     con = con or console
@@ -149,32 +216,20 @@ def confirm(rec: dict, con: Console = None):
     if risk == "safe":
         return "ran"
  
-    if risk == "danger":
-        word = _clean(rec.get("confirm_word") or "yes")
-        prompt = Text.assemble("Type ", (word, "bold red"), " to run it, or press Enter to cancel: ")
-        try:
-            answer = con.input(prompt).strip()
-        except (EOFError, KeyboardInterrupt):
-            return "cancelled"
-        if answer.casefold() == word.casefold():     # macOS filesystems ignore case
-            return "ran"
-        if answer.casefold() in ("e", "edit"):
-            return "edited"
+    word = _confirmation_word(rec)
+    prompt = Text("Confirm: ")
+    try:
+        answer = _read_confirmation_input(con, prompt)
+    except (EOFError, KeyboardInterrupt):
         return "cancelled"
- 
-    # caution (and anything unknown is treated as caution)
-    while True:
-        try:
-            key = read_key()
-        except (KeyboardInterrupt, EOFError):
-            return "cancelled"
-        if key in ("\r", "\n", "y", "Y"):
-            return "ran"
-        if key in ("\x1b", "\x03", "n", "N", "q", ""):
-            return "cancelled"
-        if key in ("e", "E"):
-            return "edited"
-        # any other key: ignore and keep waiting
+    if answer is None:
+        return "cancelled"
+    answer = answer.strip().casefold()
+    if answer in ("e", "edit"):
+        return "edited"
+    if answer == word.casefold():
+        return "ran"
+    return "cancelled"
  
  
 def show(rec: dict, con: Console = None, *, panel_printed: bool = False):
@@ -183,12 +238,12 @@ def show(rec: dict, con: Console = None, *, panel_printed: bool = False):
     risk = rec.get("risk")
  
     if risk == "safe":
-        if SAFE_ONE_LINER and not panel_printed and rec.get("summary"):
-            con.print(Text.assemble(("✓ ", "green"), (_clean(rec["summary"]), "dim")))
         rec["decision"], rec["response_ms"] = "ran", 0
         return "ran"
  
     if not panel_printed:
+        if os.environ.get("EXPLAIN_FROM_ZLE") == "1":
+            con.print()
         con.print(build_panel(rec))
     t0 = time.monotonic()
     decision = confirm(rec, con)

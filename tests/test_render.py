@@ -1,3 +1,6 @@
+import os
+from io import StringIO
+
 from rich.console import Console
 
 from explain import render
@@ -22,7 +25,7 @@ records = [
 
 
 def draw(rec):
-    con = Console(record=True, width=100)
+    con = Console(record=True, width=render.MAX_EXPLANATION_WIDTH)
     con.print(render.build_panel(rec))
     return con.export_text()
 
@@ -33,7 +36,20 @@ def test_panels_show_label_summary_and_rule_messages():
         assert rec["summary"] in text
         for msg in rec["rule_messages"]:
             assert msg in text
-    assert "Type Documents to run" in draw(records[2])
+    text = draw(records[2])
+    assert "Run: type Documents + Enter" in text
+    assert "Cancel: Esc" in text
+    assert "Edit: type e + Enter" in text
+    caution_text = draw(records[1])
+    assert "Run: type yes + Enter" in caution_text
+    assert "Cancel: Esc" in caution_text
+    assert "Edit: type e + Enter" in caution_text
+
+
+def test_explanation_panel_uses_the_target_width():
+    lines = draw(records[2]).splitlines()
+
+    assert max(map(len, lines)) == render.MAX_EXPLANATION_WIDTH
 
 
 def test_segments_are_listed():
@@ -42,9 +58,72 @@ def test_segments_are_listed():
 
 
 def test_safe_runs_without_asking():
-    assert render.show(dict(records[0])) == "ran"
+    output = StringIO()
+    con = Console(file=output)
+
+    assert render.show(dict(records[0]), con) == "ran"
+    assert output.getvalue() == ""
 
 
-def test_no_keyboard_cancels_instead_of_crashing():
+def test_explanation_width_is_capped_but_fits_narrower_terminals(monkeypatch):
+    monkeypatch.setattr(render.os, "get_terminal_size", lambda fd: os.terminal_size((160, 24)))
+    assert render._explanation_width() == render.MAX_EXPLANATION_WIDTH
+    assert render._new_console().width == render.MAX_EXPLANATION_WIDTH
+
+    monkeypatch.setattr(render.os, "get_terminal_size", lambda fd: os.terminal_size((80, 24)))
+    assert render._explanation_width() == 80
+    assert render._new_console().width == 80
+
+
+def test_no_keyboard_cancels_instead_of_crashing(monkeypatch):
     # pytest's stdin is not a terminal
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: None)
     assert render.confirm(dict(records[1])) == "cancelled"
+
+
+def test_danger_requires_confirmation_word(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "Documents")
+    assert render.confirm(dict(records[2])) == "ran"
+
+
+def test_danger_edit_shortcut_returns_to_prompt(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "e")
+    assert render.confirm(dict(records[2])) == "edited"
+
+
+def test_escape_cancels_danger_confirmation(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: None)
+    assert render.confirm(dict(records[2])) == "cancelled"
+
+
+def test_wrong_danger_confirmation_word_cancels(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "document")
+    assert render.confirm(dict(records[2])) == "cancelled"
+
+
+def test_caution_confirmation_requires_yes(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "yes")
+    assert render.confirm(dict(records[1])) == "ran"
+
+
+def test_caution_edit_shortcut_returns_to_prompt(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "e")
+    assert render.confirm(dict(records[1])) == "edited"
+
+
+def test_caution_confirmation_wrong_word_cancels(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: "y")
+    assert render.confirm(dict(records[1])) == "cancelled"
+
+
+def test_escape_cancels_caution_confirmation(monkeypatch):
+    monkeypatch.setattr(render, "_read_confirmation_input", lambda con, prompt: None)
+    assert render.confirm(dict(records[1])) == "cancelled"
+
+
+def test_danger_confirmation_prompt_does_not_repeat_panel_instructions():
+    output = StringIO()
+    con = Console(file=output)
+
+    assert render.confirm(dict(records[2]), con) == "cancelled"
+    assert output.getvalue() == "Confirm: "
