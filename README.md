@@ -1,4 +1,4 @@
-# explain-term
+# B-UNIX
 
 **A safety net for beginners in the terminal.** Every time you press Enter, explain-term tells you in plain English what the command is about to do. Risky commands need an extra confirmation, and when a command fails it explains why.
 
