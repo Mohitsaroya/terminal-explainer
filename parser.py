@@ -1,9 +1,11 @@
+import shlex
+
 test = "rm -i test.txt"
 
-#splits the command then calls programs() to group programs with their options+flags
+#splits the command into words, keeping quoted names like "my file.txt" together
+#returns -1 if the command can't be split (e.g. an unclosed quote)
 def parse(cmd=test):
     try:
-        parsed = cmd.split()
-        return parsed
-    except:
+        return shlex.split(cmd)
+    except ValueError:
         return -1

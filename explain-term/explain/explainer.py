@@ -14,7 +14,7 @@ always true for the folder you are in.
 Returns a dict with: summary, steps, side_effects, reversible, risk, explainer, explain_ms.
 Never raises: a broken glossary or a strange command still gives a usable answer.
 
-Try it:  uv run python -m explain.explainer "rm -rf ./*"
+Try it (from explain-term/):  uv run python -m explain.explainer "rm -rf ./*"
 """
 from __future__ import annotations
 
@@ -26,12 +26,15 @@ from pathlib import Path
 
 import yaml
 
+from .context import human_bytes, strip_sudo
+
 HERE = Path(__file__).parent
 RISK_ORDER = {"safe": 0, "caution": 1, "danger": 2}
 NO_UNDO = {"rm", "shred", "dd", "truncate", "unlink"}      # rm on macOS skips the Trash
 MAX_LEN, MAX_STEPS, MAX_EFFECTS = 160, 6, 5
 SEPARATORS = {"&&", "||", ";", "|", "&"}
-REDIRECTS = {">", ">>", "<", "2>", "&>"}
+# shlex splits "2>&1" into "2", ">&", "1", so the fd number is dropped in quick_parse.
+REDIRECTS = {">", ">>", "<", "&>", "&>>", ">&", "<&", ">|", "<<", "<<<"}
 
 
 # ---------------------------------------------------------------- public API
@@ -48,7 +51,7 @@ def explain(line: str, cmds=None, ctx=None) -> dict:
         cmds = list(cmds) if cmds else quick_parse(line)
     except ValueError:                       # e.g. an unclosed quote
         cmds = []
-    progs = [_prog(c) for c in cmds]
+    progs = [strip_sudo(_prog(c), _args(c))[0] for c in cmds]
 
     try:
         out, source = _from_cache(line), "cache"
@@ -101,6 +104,8 @@ def glossary() -> dict:
         path = Path(os.environ.get("EXPLAIN_GLOSSARY", HERE / "glossary.yaml"))
         try:
             data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict) and isinstance(data.get("programs"), dict):
+                data = data["programs"]      # glossary.yaml keeps every entry under `programs:`
             _glossary = {str(k): v for k, v in data.items() if isinstance(v, dict)} if isinstance(data, dict) else {}
         except (OSError, yaml.YAMLError):
             _glossary = {}
@@ -110,7 +115,7 @@ def glossary() -> dict:
 def _from_glossary(line: str, cmds: list) -> dict:
     parts, worst, undo = [], "safe", True
     for c in cmds:
-        summary, flags, risk, can_undo = _describe(_prog(c), [str(a) for a in (_get(c, "args") or [])])
+        summary, flags, risk, can_undo = _describe(_prog(c), _args(c))
         if summary:
             parts.append((summary, flags))
             worst = merge_risk(worst, risk)
@@ -130,8 +135,9 @@ def _describe(prog: str, args: list):
     """-> (summary, [flag meanings], risk, can_undo) for one simple command."""
     if not prog:
         return None, [], "safe", True
-    if prog == "sudo" and args:                       # explain the command sudo runs
-        inner, flags, risk, undo = _describe(os.path.basename(args[0]), args[1:])
+    inner_prog, inner_args = strip_sudo(prog, args)
+    if inner_prog != prog:                            # explain the command sudo runs
+        inner, flags, risk, undo = _describe(inner_prog, inner_args)
         return f"As administrator: {inner[0].lower()}{inner[1:]}", flags, merge_risk("danger", risk), undo
 
     entry = glossary().get(prog) or {}
@@ -187,7 +193,6 @@ def _impact_lines(progs: list, ctx) -> list:
     try:
         files, dirs = ctx.total_files, ctx.total_dirs
         if files or dirs:
-            from .context import human_bytes
             plus = "+" if ctx.truncated else ""
             verb = next((VERBS[p] for p in progs if p in VERBS), "affected")
             what = f"{files:,}{plus} file{'' if files == 1 and not plus else 's'}"
@@ -211,9 +216,9 @@ def _redirect_lines(line: str) -> list:
     out = []
     for i, t in enumerate(toks[:-1]):
         target = toks[i + 1]
-        if t in (">", "&>"):
+        if t in (">", "&>", ">|"):
             out.append(f"{target} is replaced: anything already in it is lost")
-        elif t == ">>":
+        elif t in (">>", "&>>"):
             out.append(f"Output is added to the end of {target}")
     return out
 
@@ -230,6 +235,10 @@ def _get(cmd, *names):
         if v:
             return v
     return None
+
+
+def _args(cmd) -> list:
+    return [str(a) for a in (_get(cmd, "args") or [])]
 
 
 def _prog(cmd) -> str:
@@ -255,6 +264,8 @@ def quick_parse(line: str) -> list:
                 out.append({"program": current[0], "args": current[1:]})
             current = []
         elif tok in REDIRECTS:
+            if len(current) > 1 and current[-1].isdigit():
+                current.pop()                          # the 2 in 2>errors.txt
             skip = True                                # the next word is the file name
         else:
             current.append(tok)

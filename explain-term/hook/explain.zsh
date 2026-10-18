@@ -5,6 +5,8 @@ typeset -g SAFE_ON=1	# 1 is on and 0 is off
 typeset -g LAST_CMD=""	#the command that is currently running
 typeset -g ERR_FILE="$(mktemp)" #temp file that collects the error output
 typeset -g CAPTURING=0		# 1 while error output is being copied, 0 otherwise
+#cli.py next to this hook, wherever the repo was cloned (%x is this file, :A:h:h is explain-term/)
+typeset -g EXPLAIN_CLI="${${(%):-%x}:A:h:h}/explain/cli.py"
 
 #Controls if safe mode is on or off
 safeon() { SAFE_ON=1; print "Explain-term is ON"; }
@@ -21,15 +23,14 @@ my_enter(){
 
 	zle -I
 	#Pass to cli.py
-	python3 ~/explain-term/explain/cli.py explain -- "$BUFFER" </dev/tty >/dev/tty 2>&1
-	# Only cancel if the exit code is exactly 1 (user said no).
+	python3 "$EXPLAIN_CLI" explain -- "$BUFFER" </dev/tty >/dev/tty 2>&1
+	# 1 = user said no, 3 = user wants to edit the command, anything else runs it.
 	# If Python crashes, run the command anyway so a bug never locks the user out.
-	if (( $? != 1 )); then
-		zle .accept-line
-	else
-		BUFFER=""
-		zle reset-prompt
-	fi
+	case $? in
+		1) BUFFER=""; zle reset-prompt ;;
+		3) zle reset-prompt ;;	#keeps the typed command so it can be changed
+		*) zle .accept-line ;;
+	esac
 }
 zle -N accept-line my_enter #Replace the zsh Enter key with my_enter
 
@@ -61,7 +62,7 @@ pre_cmd(){
 	fi
 	#Explain the failures, skips success (0), ctrl+c (130) and ctrl+z (148)
 	if [[ -n $LAST_CMD ]] && (( code != 0 && code != 130 && code != 148 )); then
-		python3 ~/explain-term/explain/cli.py error --code "$code" --errfile "$ERR_FILE" -- "$LAST_CMD" </dev/tty
+		python3 "$EXPLAIN_CLI" error --code "$code" --errfile "$ERR_FILE" -- "$LAST_CMD" </dev/tty
 	fi
 	LAST_CMD="" #Set it back to empty
 }

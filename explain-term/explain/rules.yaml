@@ -2,7 +2,7 @@ version: 1
 
 rules:
   - id: rm-recursive-everything
-    level: dangerous
+    level: danger
     match:
       program: rm
       flags_all: ["-r"]
@@ -23,7 +23,7 @@ rules:
       match: ["rm -r build/"]
 
   - id: pipe-to-shell
-    level: dangerous
+    level: danger
     match:
       program: [curl, wget]
       pipes_to: [sh, bash, zsh]
@@ -32,13 +32,16 @@ rules:
       match: ["curl https://x.sh | bash", "wget -qO- x.sh | sudo sh"]
 
   - id: fork-bomb
-    level: dangerous
+    level: danger
     match:
       raw_regex: ':\(\)\s*\{.*:\|:.*\}'
     reason: "Starts copies of itself until your computer freezes."
 
   - id: touch-brace-expansion
     level: caution
+    match:
+      program: touch
+      raw_regex: '\{[^}]*,[^}]*\}'
     reason: "Will create multiple files that might not be used"
 
 safe:
@@ -47,10 +50,10 @@ safe:
       program: touch
       flags_allowed: []
       targets_must: [no_glob]
-    note: "Creates {targets} if it doesnt exist, or updates its timestamp."
+    note: "Creates {targets} if it doesn't exist, or updates its timestamp."
     examples:
-      match:  ["touch_notes.txt", "touch a.py b.py"]
-      no match: ["sudo touch /etc/x"]
+      match:  ["touch notes.txt", "touch a.py b.py"]
+      no_match: ["sudo touch /etc/x"]
       
   - id: rm-one-file
     match:
@@ -74,7 +77,7 @@ safe:
 
 modifiers:
   sudo:
-    bump: 1        # caution → dangerous
+    bump: 1        # caution → danger
     note: "This runs as administrator, so it can change system files."
 
   

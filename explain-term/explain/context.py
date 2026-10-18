@@ -33,6 +33,8 @@ PATH_PROGRAMS = {
 }
 # For these, the LAST path argument is the destination, the rest are sources.
 HAS_DEST = {"mv", "cp", "ln", "rsync"}
+# sudo options that take a value: `sudo -u bob rm x` runs `rm x`.
+SUDO_VALUE_OPTS = {"-u", "-g", "-C", "-D", "-h", "-p", "-R", "-T", "-U"}
 
 MAX_ENTRIES = 20_000   # stop counting after this many files ("20,000+")
 TIME_BUDGET = 0.5      # seconds for all filesystem walking in one resolve()
@@ -169,11 +171,12 @@ def _resolve_into(ctx: Context, cmds, cur: str, budget: float) -> None:
     for cmd in cmds:
         prog = os.path.basename(str(_get(cmd, "program", "name", "cmd") or ""))
         args = [a for a in (_get(cmd, "args") or []) if isinstance(a, str)]
+        prog, args = strip_sudo(prog, args)
 
         if prog == "cd":
             # `cd /tmp && rm -rf *` deletes /tmp's contents, not the current folder's.
             # The hook only sees the raw line, so follow cd ourselves.
-            dest = [a for a in args if not a.startswith("-")]
+            dest = [a for a in args if a == "-" or not a.startswith("-")]
             if not dest:
                 cur = home
             elif dest[0] != "-":
@@ -204,6 +207,21 @@ def _resolve_into(ctx: Context, cmds, cur: str, budget: float) -> None:
 
 
 # ---------------------------------------------------------------- helpers
+def strip_sudo(prog: str, args: list):
+    """("sudo", ["-u", "bob", "rm", "x"]) -> ("rm", ["x"]). Anything else is returned as is."""
+    while prog == "sudo":
+        i = 0
+        while i < len(args) and args[i].startswith("-"):
+            if args[i] == "--":
+                i += 1
+                break
+            i += 2 if args[i] in SUDO_VALUE_OPTS else 1
+        if i >= len(args):              # `sudo -i` or bare `sudo`: no command to unwrap
+            break
+        prog, args = os.path.basename(args[i]), args[i + 1:]
+    return prog, args
+
+
 def _get(cmd, *names):
     for n in names:
         v = cmd.get(n) if isinstance(cmd, dict) else getattr(cmd, n, None)

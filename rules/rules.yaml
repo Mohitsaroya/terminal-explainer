@@ -4,8 +4,8 @@
 
 rules:
   - program: rm
-    args: ["-r", "-f", "/", "/*", "~", "~/", "*", ".", "..", "$HOME"]
-    level: dangerous
+    args: ["/", "/*", "~", "~/", "*", ".", "..", "$HOME"]
+    level: danger
     reason: Deletes everything under a top-level or current folder, with no undo.
   - program: rm
     level: caution
@@ -16,4 +16,4 @@ rules:
     reason: Runs as administrator, so mistakes can affect the whole system.
   - program: touch
     level: safe
-    reason: Creates a file (harmless)
+    reason: Creates a file (harmless).
